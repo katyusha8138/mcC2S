@@ -78,6 +78,9 @@ soundCategory_master:0.0
 EOF
   rm -f "$RUN/client/mods/"*.jar "$RUN/client/config/mcc2s/trust/"*.mc2strust
   rm -rf "$RUN/server/logs/mcc2s"
+  # 前回までの実行で保存されたプレイヤーデータを消す。死亡したまま切断すると体力 0 の状態が保存され、
+  # 同じ名前で再参加しても死亡画面から始まってキー入力が効かなくなる。
+  rm -rf "$RUN/server/world/playerdata" "$RUN/server/world/stats" "$RUN/server/world/advancements"
 }
 
 # start_server <mode> [min_seconds max_seconds]
