@@ -69,6 +69,7 @@ maxFps:15
 fancyGraphics:false
 enableVsync:false
 skipMultiplayerWarning:true
+pauseOnLostFocus:false
 soundCategory_master:0.0
 EOF
   rm -f "$RUN/client/mods/"*.jar "$RUN/client/config/mcc2s/trust/"*.mc2strust
@@ -276,10 +277,18 @@ scenario_onchange() {
   expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"
   sleep 10   # ワールドの読み込みが終わり、画面を閉じた状態になるまで待つ
   local disp; disp=$(xvfb_display)
+  local before; before=$(grep -c "Reloading ResourceManager" "$clog")
   python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t
-  # 定期検証(既定 300 秒以上)ではなく、リソース再読み込みの通知で再検証されたことを確かめる
-  expect_within 30 "the reload really happened on the client (F3+T)" "$clog" "Reloading ResourceManager"
-  expect_within 40 "the server re-verified the player right after the reload notification" "$SERVER_LOG" "\[mcC2S\] OnChangeOli re-verified"
+  # 起動時の再読み込みと区別するため、「押した後に回数が増えた」ことを確かめる
+  local reloaded=0
+  for _ in $(seq 1 30); do
+    [ "$(grep -c "Reloading ResourceManager" "$clog")" -gt "$before" ] && { reloaded=1; break; }
+    sleep 1
+  done
+  if [ "$reloaded" = 1 ]; then log "  PASS: the reload really happened on the client (F3+T)"; PASS=$((PASS+1))
+  else log "  FAIL: F3+T did not trigger a resource reload on the client"; FAIL=$((FAIL+1)); fi
+  # 定期検証(600 秒以上)ではなく、リソース再読み込みの通知で再検証されたことを確かめる
+  expect_within 40 "the server re-verified the player right after the reload notification" "$SERVER_LOG" "\\[mcC2S\\] OnChangeOli re-verified"
   stop_client
 }
 

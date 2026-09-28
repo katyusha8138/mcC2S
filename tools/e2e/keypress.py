@@ -14,6 +14,24 @@ from Xlib import X, XK, display
 from Xlib.ext import xtest
 
 
+def find_window(d, name_prefix):
+    """ルートの子孫から、名前が name_prefix で始まるウィンドウを探す。"""
+    stack = list(d.screen().root.query_tree().children)
+    while stack:
+        w = stack.pop()
+        try:
+            name = w.get_wm_name()
+        except Exception:  # noqa: BLE001 (消えたウィンドウなど)
+            name = None
+        if name and name.startswith(name_prefix):
+            return w
+        try:
+            stack.extend(w.query_tree().children)
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(__doc__)
@@ -27,8 +45,18 @@ def main() -> int:
             return 2
         codes.append(d.keysym_to_keycode(keysym))
 
-    # ウィンドウマネージャが無いので、ポインタの下のウィンドウにキーが届く。画面の中央付近に置く。
-    xtest.fake_input(d, X.MotionNotify, x=400, y=240)
+    # ウィンドウマネージャが無いため、Minecraft のウィンドウに入力フォーカスを明示的に与える。
+    # (フォーカスが無いと「フォーカス喪失で一時停止」になり、キーがゲームに届かない)
+    win = find_window(d, "Minecraft")
+    if win is not None:
+        geo = win.get_geometry()
+        win.set_input_focus(X.RevertToParent, X.CurrentTime)
+        x, y = geo.x + geo.width // 2, geo.y + geo.height // 2
+        print(f"[keypress] focused window {win.id:#x} ({geo.width}x{geo.height} at {geo.x},{geo.y})")
+    else:
+        x, y = 400, 240
+        print("[keypress] Minecraft window not found; sending keys to the pointer position")
+    xtest.fake_input(d, X.MotionNotify, x=x, y=y)
     d.sync()
     time.sleep(0.3)
     for c in codes:
