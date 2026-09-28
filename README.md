@@ -7,7 +7,8 @@ Minecraft サーバー運営者向けの**チート・不正対策 Mod**(Forge /
 サーバーコンソールに報告します。シングルプレイや mcC2S 未導入のサーバーでは何もしません。
 mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの無い)クライアントも参加できません。
 
-> **状態: 開発中(M1: ローダー非依存の `core` を実装済み)**。まだ Minecraft に導入できる Mod ではありません。
+> **状態: 開発中(M1 `core` + M2 NeoForge 1.21.1 アダプタを実装済み)**。NeoForge 1.21.1 の専用サーバー+クライアントで
+> 実機の動作確認済みですが、リリース前の機能(再検証・コマンド・難読化・Forge 1.20.1 対応)が残っています。
 > 計画は [docs/PLAN.md](docs/PLAN.md)。
 
 ## 何を守れて、何を守れないか
@@ -23,8 +24,10 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 | ディレクトリ | 内容 | 状態 |
 |---|---|---|
 | `core/` | 暗号ハンドシェイク・マニフェスト・ポリシー・設定・署名(Minecraft 非依存、Java 17 API) | 実装済み・テスト済み |
-| `neoforge/` | NeoForge 1.21.1 アダプタ | 未着手(M2) |
+| `common/` | ファイル走査・検証の状態機械・設定ファイル生成・違反ログ(Minecraft 非依存、Java 17 API) | 実装済み・テスト済み |
+| `neoforge/` | NeoForge 1.21.1 アダプタ(設定フェーズで検証) | 実装済み・実機 E2E 済み |
 | `forge/` | Forge 1.20.1 アダプタ | 未着手(M4) |
+| `tools/e2e/` | 実機エンドツーエンド試験(専用サーバー+実クライアント) | — |
 
 ## ライセンス
 
@@ -32,11 +35,22 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 
 ## ビルドとテスト
 
-JDK 17 以上が必要です(`core` は Java 17 API に固定)。
+JDK 21 が必要です(`core` / `common` は Java 17 API に固定)。
 
 ```sh
-./gradlew :core:test
+./gradlew build                 # 全モジュールのビルドとユニットテスト
+./gradlew :neoforge:jar         # 配布用 jar(core / common を同梱)
+tools/e2e/e2e.sh                # 実機 E2E(専用サーバー+実クライアント。Xvfb / Mesa が必要)
 ```
+
+## サーバー運営者向けの流れ
+
+1. サーバーの `mods/` に mcC2S を入れて起動すると、`config/mcc2s/` に設定と鍵が自動生成されます。
+2. `config/mcc2s/trust/server-*.mc2strust`(**信頼ファイル**)を Mod パックに同梱してプレイヤーに配布します。
+   プレイヤーは `config/mcc2s/trust/` に置きます(秘密鍵は含まれません)。
+3. 最初は `config/mcc2s/policy.toml` を `mode = "audit"` にして、ログ(`logs/mcc2s/violations.jsonl`)で
+   誤検知を洗い出してから `enforce` にします。クライアント専用 Mod は、ログに出た SHA-256 を
+   `[[mods.allow]]` に追加して許可します。
 
 ## 設定例(サーバー)
 

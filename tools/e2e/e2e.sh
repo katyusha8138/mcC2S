@@ -201,7 +201,7 @@ scenario_extrajar() {
   run_client SneakySam; local clog="$CLIENT_LOG"
   expect "server denied the client" "$SERVER_LOG" "\[mcC2S\] DENIED SneakySam"
   expect "the hidden jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[hidden-cheat-loader.jar\]"
-  expect "client was disconnected" "$clog" "Client disconnected with reason: .*Unauthorized"
+  expect "client was disconnected with the denial message" "$clog" "Client disconnected with reason: \[mcC2S\] 許可されていない"
   expect_not "never joined" "$SERVER_LOG" "SneakySam joined the game"
   expect "JSON Lines record written" "$RUN/server/logs/mcc2s/violations.jsonl" "hidden-cheat-loader.jar"
   stop_client
