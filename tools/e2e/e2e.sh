@@ -11,7 +11,11 @@
 #   trusted   信頼ファイルを持つ正規クライアント                          -> 通る
 #   notrust   信頼ファイルが無いクライアント                              -> クライアントが案内付きで中止する
 #   extrajar  mods/ に未登録の jar(隠し jar)を置いたクライアント        -> 拒否される
+#   reverify  プレイ中の定期再検証(参加後に隠し jar を置く)              -> 次の再検証で検出されて切断される
+#   onchange  リソース再読み込み(F3+T)の通知による即時再検証            -> 定期間隔を待たずに再検証される
 #   audit     audit モード + 隠し jar                                     -> 通る(違反はログに残る)
+#
+# 各シナリオはクライアントの mods/ と信頼ファイルを空にしてから始まる(前のシナリオの影響を受けない)。
 #
 # 前提: Xvfb / Mesa(ソフトウェア GL)、Python 3。ネットワークは Gradle の依存取得にのみ使う。
 # 重要: シナリオの途中で neoforge のビルド出力(build/classes)を変えないこと。
@@ -176,8 +180,9 @@ wait_for() { # wait_for <ファイル> <正規表現>
   done
   return 1
 }
-expect() { # expect <説明> <ファイル> <正規表現>
-  if wait_for "$2" "$3"; then log "  PASS: $1"; PASS=$((PASS+1)); else log "  FAIL: $1  (pattern '$3' not found in $2)"; FAIL=$((FAIL+1)); fi
+expect() { # expect <説明> <ファイル> <正規表現>   (成功なら 0、失敗なら 1 を返す)
+  if wait_for "$2" "$3"; then log "  PASS: $1"; PASS=$((PASS+1)); return 0; fi
+  log "  FAIL: $1  (pattern '$3' not found in $2)"; FAIL=$((FAIL+1)); return 1
 }
 expect_not() { # 一定時間待っても現れないこと
   sleep 3
@@ -268,7 +273,8 @@ scenario_reverify() {
   log "== reverify: periodic re-verification while playing (interval 30-35s)"
   install_trust
   run_client ReverifyRae; local clog="$CLIENT_LOG"
-  expect "joined the world" "$SERVER_LOG" "ReverifyRae joined the game"
+  # 参加できていなければ、以降の判定(特に「後から入れた jar を再検証で検出」)は意味を持たないので打ち切る
+  if ! expect "joined the world" "$SERVER_LOG" "ReverifyRae joined the game"; then stop_client; return 0; fi
   expect_within 90 "the server re-verified the player during play" "$SERVER_LOG" "\[mcC2S\] ReverifyRae re-verified"
   # 参加後に隠しライブラリ jar を置く(ログイン後に導入されたチートを想定)
   make_plain_jar "$RUN/client/mods/late-cheat-loader.jar"
@@ -286,7 +292,7 @@ scenario_onchange() {
   fi
   install_trust
   run_client OnChangeOli; local clog="$CLIENT_LOG"
-  expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"
+  if ! expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"; then stop_client; return 0; fi
   local disp; disp=$(xvfb_display)
   # 診断: 参加の数秒後と、キー入力の前の画面(死亡画面などでキーが効かない場合の切り分け用)
   sleep 4
@@ -332,6 +338,9 @@ main() {
       start_server $profile || { log "cannot start the server for '$s' ($profile)"; exit 2; }
       current="$profile"
     fi
+    # 各シナリオは、前のシナリオがクライアントの mods/ に置いた jar を引き継がない(隔離)。
+    # 信頼ファイルもここで外し、必要なシナリオが install_trust で入れ直す。
+    rm -f "$RUN/client/mods/"*.jar "$RUN/client/config/mcc2s/trust/"*.mc2strust
     "scenario_$s"
   done
   kill_game
