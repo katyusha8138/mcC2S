@@ -60,6 +60,10 @@ spawn-protection=0
 max-players=5
 view-distance=4
 simulation-distance=4
+# ソフトウェア描画は遅く、地形の読み込み前に落下死すると画面が開いてキー入力が効かなくなるため、死なないようにする
+gamemode=creative
+force-gamemode=true
+difficulty=peaceful
 EOF
   cat > "$RUN/client/options.txt" <<EOF
 onboardAccessibility:false
