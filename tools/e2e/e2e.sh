@@ -280,20 +280,21 @@ scenario_onchange() {
   install_trust
   run_client OnChangeOli; local clog="$CLIENT_LOG"
   expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"
-  sleep 10   # ワールドの読み込みが終わり、画面を閉じた状態になるまで待つ
   local disp; disp=$(xvfb_display)
   local before; before=$(grep -c "Reloading ResourceManager" "$clog")
-  if ! XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t; then
-    log "  (keypress helper failed; see the output above)"
-  fi
-  # 起動時の再読み込みと区別するため、「押した後に回数が増えた」ことを確かめる
+  # ソフトウェア描画は遅く、参加直後は「地形を読み込み中」でキーが効かないため、リソースが再読み込みされるまで 5 秒おきに押し直す
   local reloaded=0
-  for _ in $(seq 1 30); do
-    [ "$(grep -c "Reloading ResourceManager" "$clog")" -gt "$before" ] && { reloaded=1; break; }
-    sleep 1
+  for attempt in $(seq 1 12); do
+    sleep 5
+    XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t >/dev/null 2>&1
+    sleep 2
+    if [ "$(grep -c "Reloading ResourceManager" "$clog")" -gt "$before" ]; then reloaded=1; log "  (F3+T took effect on attempt $attempt)"; break; fi
   done
   if [ "$reloaded" = 1 ]; then log "  PASS: the reload really happened on the client (F3+T)"; PASS=$((PASS+1))
-  else log "  FAIL: F3+T did not trigger a resource reload on the client"; FAIL=$((FAIL+1)); fi
+  else
+    log "  FAIL: F3+T did not trigger a resource reload on the client"; FAIL=$((FAIL+1))
+    XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/screenshot.py" "$disp" "$OUT/onchange-screen.png" 2>/dev/null && log "  screenshot: $OUT/onchange-screen.png"
+  fi
   # 定期検証(600 秒以上)ではなく、リソース再読み込みの通知で再検証されたことを確かめる
   expect_within 40 "the server re-verified the player right after the reload notification" "$SERVER_LOG" "\\[mcC2S\\] OnChangeOli re-verified"
   stop_client
