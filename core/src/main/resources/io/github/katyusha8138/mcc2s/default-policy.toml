@@ -1,0 +1,71 @@
+# ============================================================
+# mcC2S ポリシー設定
+# サーバーに入っている Mod と、ここで明示した Mod/パック以外を持つクライアントを拒否します。
+# ============================================================
+
+# enforce : 違反したクライアントの接続を拒否する
+# audit   : 違反をログに出すだけで通す(導入初期の洗い出し用。運用開始前に enforce へ)
+mode = "enforce"
+
+# クライアントに報告を要求する範囲。mcC2S 本体は常に必須です。
+# mods / resource_packs / shader_packs / jvm_agents
+scopes = ["mods", "resource_packs", "shader_packs", "jvm_agents"]
+
+# ログイン後、この秒数以内に検証が完了しなければ切断します(5〜300)。
+handshake_timeout_seconds = 30
+
+# true: 拒否時にプレイヤーへ違反項目(Mod 名など)を表示する。
+# false(既定): 参照コード(MC2S-XXXXXXXXXXXXXXXX)だけ表示し、詳細はサーバーログのみ。
+show_details_to_player = false
+
+# 「今そのファイルを持っている」ことの証明(測定証明)を要求する項目の割合(0〜100)。
+# サーバーが同じファイルを持つ項目(サーバー側 Mod・mcC2S 本体・reference/ の jar)だけ検証できます。
+proof_rate_percent = 20
+
+# true: 証明が必須なのに参照ファイルが無く検証できない項目も違反にする(厳格運用。reference/ に全 jar が必要)。
+require_reference = false
+
+# プレイ中のランダム再検証(ログイン後に導入されたチートの検知)。
+[reverify]
+enabled = true
+min_seconds = 300
+max_seconds = 900
+
+# ---- Mod ----------------------------------------------------
+[mods]
+# hash       : jar の SHA-256 が一致(既定・最も厳格)
+# id_version : Mod ID とバージョンが一致
+# id         : Mod ID のみ一致
+match = "hash"
+# サーバー自身に入っている Mod を許可する
+allow_server_baseline = true
+
+# クライアント専用 Mod(Sodium 等)を許可する例。match = "hash" では sha256 が必須です。
+# [[mods.allow]]
+# id = "sodium"
+# sha256 = ["0000000000000000000000000000000000000000000000000000000000000000"]
+# note = "軽量化 Mod"
+
+# ---- mods/ にあるが Mod として登録されない jar(ライブラリ・隠し jar)----
+[libraries]
+match = "hash"
+allow_server_baseline = true
+
+# ---- リソースパック(外部の zip / フォルダ)-------------------
+[resource_packs]
+match = "hash"
+# [[resource_packs.allow]]
+# id = "file/MyPack.zip"
+# sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# ---- シェーダーパック ----------------------------------------
+[shader_packs]
+match = "hash"
+
+# ---- JVM エージェント(-javaagent / -agentpath)---------------
+[agents]
+match = "hash"
+
+# ---- その他のコード源 ----------------------------------------
+[other_code]
+match = "hash"

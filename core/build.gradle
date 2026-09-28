@@ -1,0 +1,29 @@
+plugins {
+    id 'java-library'
+}
+
+// core は Forge 1.20.1 (Java 17) と NeoForge 1.21.1 (Java 21) の双方から使うため Java 17 API に固定する。
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:all', '-Werror']
+}
+
+dependencies {
+    // TOML 設定の読み込み用。Forge / NeoForge (FML) が同梱しているため実行時は提供される。
+    compileOnly 'com.electronwill.night-config:toml:3.6.7'
+
+    testImplementation 'com.electronwill.night-config:toml:3.6.7'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}

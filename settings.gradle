@@ -1,0 +1,5 @@
+rootProject.name = 'mcc2s'
+
+// M1: ローダー非依存コア。
+// neoforge / forge アダプタは Forge・NeoForge の Maven が到達可能になった段階(M2)で追加する。
+include 'core'

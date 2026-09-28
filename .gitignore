@@ -1,0 +1,14 @@
+.gradle/
+build/
+out/
+run/
+.idea/
+*.iml
+*.class
+*.log
+.DS_Store
+# 秘密鍵・サーバー固有の信頼ファイルは絶対にコミットしない
+*.identity
+*.mc2strust
+server_identity*.txt
+pack_secrets*.txt

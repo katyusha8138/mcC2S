@@ -1,0 +1,7 @@
+allprojects {
+    group = 'io.github.katyusha8138.mcc2s'
+    version = mcc2s_version
+    repositories {
+        mavenCentral()
+    }
+}
