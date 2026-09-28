@@ -50,6 +50,7 @@ public final class ServerRuntime implements AutoCloseable {
     private final Path configDir;
     private final String selfSha;
     private final LastViolations lastViolations;
+    private final String selfVersion;
 
     private ServerRuntime(
             ServerContext context,
@@ -58,7 +59,8 @@ public final class ServerRuntime implements AutoCloseable {
             Path trustFilePath,
             Path configDir,
             String selfSha,
-            LastViolations lastViolations) {
+            LastViolations lastViolations,
+            String selfVersion) {
         this.context = context;
         this.worker = worker;
         this.timer = timer;
@@ -66,6 +68,7 @@ public final class ServerRuntime implements AutoCloseable {
         this.configDir = configDir;
         this.selfSha = selfSha;
         this.lastViolations = lastViolations;
+        this.selfVersion = selfVersion;
     }
 
     public static ServerRuntime start(Inputs in, SecureRandom rnd)
@@ -118,7 +121,7 @@ public final class ServerRuntime implements AutoCloseable {
         log.info("[mcC2S] ready: mode=" + files.policy().mode() + ", baseline=" + baseline.size() + " server-side jar(s), references="
                 + references.size() + ", trusted mcC2S builds=" + trustedSelf.size());
         log.info("[mcC2S] trust file to distribute to players (put it in the client's config/mcc2s/trust/): " + files.trustFilePath());
-        return new ServerRuntime(ctx, worker, timer, files.trustFilePath(), in.configDir(), selfSha, lastViolations);
+        return new ServerRuntime(ctx, worker, timer, files.trustFilePath(), in.configDir(), selfSha, lastViolations, in.selfVersion());
     }
 
     public ServerContext context() {
@@ -128,6 +131,10 @@ public final class ServerRuntime implements AutoCloseable {
     /** プレイヤーごとの直近の違反(`/mcc2s whitelist add <player>` 用)。 */
     public LastViolations lastViolations() {
         return lastViolations;
+    }
+
+    public String selfVersion() {
+        return selfVersion;
     }
 
     public Path policyPath() {

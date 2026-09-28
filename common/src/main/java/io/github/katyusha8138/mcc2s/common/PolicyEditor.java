@@ -71,14 +71,7 @@ public final class PolicyEditor {
         }
         List<Added> added = new ArrayList<>();
         for (Violation v : candidates.values()) {
-            add.append('\n').append("# ").append(oneLine(note)).append(' ').append(date).append('\n');
-            add.append("[[").append(section(v.kind())).append(".allow]]\n");
-            add.append("id = ").append(quote(v.id())).append('\n');
-            if (!v.version().isEmpty()) {
-                add.append("version = ").append(quote(v.version())).append('\n');
-            }
-            add.append("sha256 = [").append(quote(v.sha256())).append("]\n");
-            add.append("note = ").append(quote(note + " " + date)).append('\n');
+            add.append('\n').append(snippet(v.kind(), v.id(), v.version(), v.sha256(), note + " " + date));
             added.add(new Added(v.kind(), v.id(), v.version(), v.sha256()));
         }
 
@@ -95,7 +88,26 @@ public final class PolicyEditor {
                 policyFile, List.of(new Violation(ViolationCode.NOT_ALLOWED, kind, id, "", sha256, "")), note, clock);
     }
 
-    static String section(EntryKind kind) {
+    /**
+     * 許可項目 1 件分の TOML 断片(コメント行 + テーブル)。クライアント由来の文字列は必ずエスケープされる。
+     * `mcc2s-cli hash --toml` と `/mcc2s whitelist add` が共用する。
+     */
+    public static String snippet(EntryKind kind, String id, String version, String sha256, String note) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(oneLine(note)).append('\n');
+        sb.append("[[").append(section(kind)).append(".allow]]\n");
+        if (id != null && !id.isEmpty()) {
+            sb.append("id = ").append(quote(id)).append('\n');
+        }
+        if (version != null && !version.isEmpty()) {
+            sb.append("version = ").append(quote(version)).append('\n');
+        }
+        sb.append("sha256 = [").append(quote(sha256)).append("]\n");
+        sb.append("note = ").append(quote(note)).append('\n');
+        return sb.toString();
+    }
+
+    public static String section(EntryKind kind) {
         switch (kind) {
             case MOD:
                 return "mods";

@@ -7,6 +7,8 @@ import io.github.katyusha8138.mcc2s.common.Bindings;
 import io.github.katyusha8138.mcc2s.common.ClientVerification;
 import io.github.katyusha8138.mcc2s.common.ManifestAssembler;
 import io.github.katyusha8138.mcc2s.common.TrustFiles;
+import io.github.katyusha8138.mcc2s.core.handshake.Fragmenter;
+import io.github.katyusha8138.mcc2s.core.wire.WireException;
 import io.github.katyusha8138.mcc2s.neoforge.FmlInfo;
 import io.github.katyusha8138.mcc2s.neoforge.VerifyPayload;
 import java.nio.file.Path;
@@ -17,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
 import net.neoforged.fml.loading.FMLLoader;
@@ -38,14 +41,47 @@ public final class ClientHooks {
 
     private ClientHooks() {}
 
-    /** サーバー→クライアントのチャンク(チャレンジ / 判定)。 */
+    /**
+     * サーバー→クライアントのチャンク(チャレンジ / 判定)。
+     * 新しいチャレンジの先頭チャンクが来るたびに検証を最初から作り直す(参加時の検証と、プレイ中の再検証の両方)。
+     */
     public static void handle(VerifyPayload payload, IPayloadContext context) {
         Connection connection = context.connection();
-        ClientVerification v = SESSIONS.computeIfAbsent(connection, c -> {
-            c.channel().closeFuture().addListener(f -> SESSIONS.remove(c));
-            return create(context);
-        });
-        v.onChunk(payload.data());
+        byte[] data = payload.data();
+        ClientVerification v;
+        if (isChallengeStart(data)) {
+            v = create(context);
+            if (SESSIONS.put(connection, v) == null) {
+                connection.channel().closeFuture().addListener(f -> SESSIONS.remove(connection));
+            }
+        } else {
+            v = SESSIONS.get(connection);
+            if (v == null) {
+                return; // チャレンジ無しに届いたチャンクは無視する
+            }
+        }
+        v.onChunk(data);
+    }
+
+    private static boolean isChallengeStart(byte[] data) {
+        try {
+            Fragmenter.Chunk c = Fragmenter.Chunk.decode(data);
+            return c.type() == Fragmenter.TYPE_CHALLENGE && c.index() == 0;
+        } catch (WireException e) {
+            return false;
+        }
+    }
+
+    /**
+     * リソースが再読み込みされた(リソースパックの切り替えなど)。mcC2S 導入サーバーに接続中なら、
+     * 次の定期検証を待たずに再検証してほしいとサーバーに通知する(サーバー側で連打は抑制される)。
+     */
+    static void onResourcesReloaded() {
+        ClientPacketListener listener = Minecraft.getInstance().getConnection();
+        if (listener == null || !SESSIONS.containsKey(listener.getConnection()) || !listener.hasChannel(VerifyPayload.TYPE)) {
+            return; // シングルプレイ・未導入サーバー・接続前の初回読み込みでは何もしない
+        }
+        listener.send(new VerifyPayload(new Fragmenter.Chunk(Fragmenter.TYPE_REVERIFY_REQUEST, 0, 1, new byte[0]).encode()));
     }
 
     private static ClientVerification create(IPayloadContext context) {

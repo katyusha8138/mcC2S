@@ -12,4 +12,5 @@ rootProject.name = 'mcc2s'
 // forge    : Forge 1.20.1 アダプタ(M4)
 include 'core'
 include 'common'
+include 'cli'
 include 'neoforge'

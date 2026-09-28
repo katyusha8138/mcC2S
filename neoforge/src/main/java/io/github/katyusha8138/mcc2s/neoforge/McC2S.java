@@ -4,11 +4,16 @@
 package io.github.katyusha8138.mcc2s.neoforge;
 
 import io.github.katyusha8138.mcc2s.neoforge.client.ClientHooks;
+import io.github.katyusha8138.mcc2s.neoforge.client.ClientReload;
+import io.github.katyusha8138.mcc2s.neoforge.server.ServerCommands;
 import io.github.katyusha8138.mcc2s.neoforge.server.ServerHooks;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.network.event.RegisterConfigurationTasksEvent;
@@ -35,6 +40,14 @@ public final class McC2S {
             modBus.addListener(RegisterConfigurationTasksEvent.class, ServerHooks::onConfigurationTasks);
             NeoForge.EVENT_BUS.addListener(ServerAboutToStartEvent.class, ServerHooks::onServerAboutToStart);
             NeoForge.EVENT_BUS.addListener(ServerStoppedEvent.class, ServerHooks::onServerStopped);
+            // プレイ中のランダム再検証(参加後に導入されたチートの検知)と管理コマンド
+            NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerLoggedInEvent.class, ServerHooks::onPlayerLoggedIn);
+            NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerLoggedOutEvent.class, ServerHooks::onPlayerLoggedOut);
+            NeoForge.EVENT_BUS.addListener(RegisterCommandsEvent.class, ServerCommands::register);
+        }
+        if (FMLEnvironment.dist.isClient()) {
+            // リソースパックの切り替え(リソースの再読み込み)をサーバーに知らせ、即時の再検証を促す
+            modBus.addListener(RegisterClientReloadListenersEvent.class, ClientReload::register);
         }
     }
 
@@ -43,7 +56,8 @@ public final class McC2S {
                 .optional()
                 // 既定ではメインスレッドで処理される。ハッシュ計算などでゲームを止めないよう、ネットワークスレッドで受ける。
                 .executesOn(HandlerThread.NETWORK)
-                .configurationBidirectional(
+                // 設定フェーズ(参加時の検証)とプレイフェーズ(再検証)の両方で使う
+                .commonBidirectional(
                         VerifyPayload.TYPE,
                         VerifyPayload.CODEC,
                         new DirectionalPayloadHandler<>(ClientHooks::handle, ServerHooks::handle));

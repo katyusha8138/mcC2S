@@ -75,33 +75,43 @@ EOF
   rm -rf "$RUN/server/logs/mcc2s"
 }
 
-start_server() {
-  local mode="$1"
-  kill_game
-  # ポリシー(mode)を指定して起動する。既存の識別鍵・pack_secret は再利用される。
-  mkdir -p "$RUN/server/config/mcc2s"
-  if [ -f "$RUN/server/config/mcc2s/policy.toml" ]; then
-    sed -i "s/^mode = .*/mode = \"$mode\"/" "$RUN/server/config/mcc2s/policy.toml"
-  fi
-  rm -rf "$RUN/server/logs/mcc2s"
+# start_server <mode> [min_seconds max_seconds]
+# ポリシー(mode と再検証の間隔)を指定して専用サーバーを起動する。既存の識別鍵・pack_secret は再利用される。
+apply_policy() {
+  local mode="$1" min="${2:-300}" max="${3:-900}"
+  local f="$RUN/server/config/mcc2s/policy.toml"
+  [ -f "$f" ] || return 0
+  sed -i "s/^mode = .*/mode = \"$mode\"/; s/^min_seconds = .*/min_seconds = $min/; s/^max_seconds = .*/max_seconds = $max/" "$f"
+}
+
+boot_server() {
   : > "$SERVER_LOG"
   (cd "$ROOT" && nohup ./gradlew :neoforge:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
   for _ in $(seq 1 180); do
-    grep -q 'Done (' "$SERVER_LOG" && break
+    grep -q 'Done (' "$SERVER_LOG" && return 0
     grep -q 'Failed to start the minecraft server' "$SERVER_LOG" && { log "server failed to start"; tail -20 "$SERVER_LOG"; return 1; }
     sleep 2
   done
-  grep -q 'Done (' "$SERVER_LOG" || { log "server did not start in time"; return 1; }
-  # 初回起動時に policy.toml が生成される。mode を反映するため、生成直後の場合は再起動する。
-  if ! grep -q "mode=$(echo "$mode" | tr a-z A-Z)" "$SERVER_LOG"; then
-    log "policy mode differs from '$mode'; restarting once with the generated policy"
+  log "server did not start in time"
+  return 1
+}
+
+start_server() {
+  local mode="$1" min="${2:-300}" max="${3:-900}"
+  kill_game
+  mkdir -p "$RUN/server/config/mcc2s"
+  local first=0
+  [ -f "$RUN/server/config/mcc2s/policy.toml" ] || first=1
+  apply_policy "$mode" "$min" "$max"
+  rm -rf "$RUN/server/logs/mcc2s"
+  boot_server || return 1
+  # policy.toml が無かった場合は今の起動で既定値のまま生成された。指定のプロファイルを反映するため 1 回だけ再起動する。
+  if [ "$first" = 1 ]; then
     kill_game
-    sed -i "s/^mode = .*/mode = \"$mode\"/" "$RUN/server/config/mcc2s/policy.toml"
-    : > "$SERVER_LOG"
-    (cd "$ROOT" && nohup ./gradlew :neoforge:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
-    for _ in $(seq 1 180); do grep -q 'Done (' "$SERVER_LOG" && break; sleep 2; done
+    apply_policy "$mode" "$min" "$max"
+    boot_server || return 1
   fi
-  grep -q 'Done (' "$SERVER_LOG"
+  return 0
 }
 
 # FML がライブラリとして警告なしに読み込む jar(マニフェストに FMLModType)を作る。
@@ -166,6 +176,16 @@ expect_not() { # 一定時間待っても現れないこと
   if grep -qE "$3" "$2" 2>/dev/null; then log "  FAIL: $1  (unexpected '$3' in $2)"; FAIL=$((FAIL+1)); else log "  PASS: $1"; PASS=$((PASS+1)); fi
 }
 
+# 指定秒数まで待って判定する(定期再検証のように時間のかかる事象用)
+expect_within() { # expect_within <秒> <説明> <ファイル> <正規表現>
+  local secs="$1"
+  for _ in $(seq 1 "$secs"); do
+    grep -qE "$4" "$3" 2>/dev/null && { log "  PASS: $2"; PASS=$((PASS+1)); return 0; }
+    sleep 1
+  done
+  log "  FAIL: $2  (pattern '$4' not found in $3 within ${secs}s)"; FAIL=$((FAIL+1))
+}
+
 scenario_vanilla() {
   log "== vanilla: client without mcC2S"
   python3 "$ROOT/tools/e2e/vanilla_probe.py" --port $PORT --name VanillaVic > "$OUT/vanilla.out" 2>&1
@@ -217,21 +237,43 @@ scenario_audit() {
   stop_client
 }
 
+scenario_reverify() {
+  log "== reverify: periodic re-verification while playing (interval 30-35s)"
+  install_trust
+  run_client ReverifyRae; local clog="$CLIENT_LOG"
+  expect "joined the world" "$SERVER_LOG" "ReverifyRae joined the game"
+  expect_within 90 "the server re-verified the player during play" "$SERVER_LOG" "\[mcC2S\] ReverifyRae re-verified"
+  # 参加後に隠しライブラリ jar を置く(ログイン後に導入されたチートを想定)
+  make_plain_jar "$RUN/client/mods/late-cheat-loader.jar"
+  expect_within 90 "the late-installed jar was detected by the next re-verification" "$SERVER_LOG" "\[mcC2S\] DENIED ReverifyRae"
+  expect "the jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[late-cheat-loader.jar\]"
+  expect "the player was kicked out of the running game" "$clog" "Client disconnected with reason: \[mcC2S\] 許可されていない"
+  stop_client
+}
+
+# シナリオごとに必要なサーバー設定(プロファイル)。プロファイルが変わるときだけサーバーを再起動する。
+profile_of() {
+  case "$1" in
+    audit) echo "audit 300 900" ;;
+    reverify) echo "enforce 30 35" ;;
+    *) echo "enforce 300 900" ;;
+  esac
+}
+
 main() {
   local scenarios=("$@")
-  [ ${#scenarios[@]} -eq 0 ] && scenarios=(vanilla trusted notrust extrajar audit)
+  [ ${#scenarios[@]} -eq 0 ] && scenarios=(vanilla trusted notrust extrajar reverify audit)
   prepare
-  # 初回: policy.toml と信頼ファイルを生成させる
-  start_server enforce || { log "cannot start the server"; exit 2; }
-  local needs_audit=0
+  local current=""
   for s in "${scenarios[@]}"; do
-    if [ "$s" = audit ]; then needs_audit=1; continue; fi
+    local profile; profile=$(profile_of "$s")
+    if [ "$profile" != "$current" ]; then
+      # shellcheck disable=SC2086
+      start_server $profile || { log "cannot start the server for '$s' ($profile)"; exit 2; }
+      current="$profile"
+    fi
     "scenario_$s"
   done
-  if [ "$needs_audit" = 1 ]; then
-    start_server audit || { log "cannot restart the server in audit mode"; exit 2; }
-    scenario_audit
-  fi
   kill_game
   log "result: $PASS passed, $FAIL failed"
   [ "$FAIL" = 0 ]

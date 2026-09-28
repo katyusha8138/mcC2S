@@ -9,8 +9,12 @@ import io.github.katyusha8138.mcc2s.core.handshake.Ed25519Identity;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -28,10 +32,33 @@ public final class OfficialBuilds {
     public static final String HEADER = "mcc2s-official-builds-v1";
     private static final String SIG_LABEL = "mcC2S/v1 official-builds\n";
 
+    /** 公式ビルド 1 件。 */
+    public record Build(String sha256, String version, String loader) {
+        public Build {
+            if (!Digests.isSha256Hex(sha256)) {
+                throw new IllegalArgumentException("sha256 must be 64 lowercase hex chars");
+            }
+            if (version.isBlank() || loader.isBlank() || version.matches(".*\\s.*") || loader.matches(".*\\s.*")) {
+                throw new IllegalArgumentException("version and loader must be non-empty and contain no whitespace");
+            }
+        }
+    }
+
+    private final List<Build> builds;
     private final Set<String> hashes;
 
-    private OfficialBuilds(Set<String> hashes) {
-        this.hashes = Collections.unmodifiableSet(hashes);
+    private OfficialBuilds(List<Build> builds) {
+        this.builds = Collections.unmodifiableList(new ArrayList<>(builds));
+        Set<String> h = new LinkedHashSet<>();
+        for (Build b : builds) {
+            h.add(b.sha256());
+        }
+        this.hashes = Collections.unmodifiableSet(h);
+    }
+
+    /** 掲載順のビルド一覧(追記専用で引き継ぐため、バージョン・ローダーも保持する)。 */
+    public List<Build> builds() {
+        return builds;
     }
 
     public Set<String> hashes() {
@@ -43,7 +70,7 @@ public final class OfficialBuilds {
     }
 
     public static OfficialBuilds empty() {
-        return new OfficialBuilds(new LinkedHashSet<>());
+        return new OfficialBuilds(new ArrayList<>());
     }
 
     /** リリース公開鍵で署名を検証し、成功したものだけを返す。 */
@@ -69,7 +96,7 @@ public final class OfficialBuilds {
         if (lines.length == 0 || !lines[0].trim().equals(HEADER)) {
             throw new GeneralSecurityException("bad header");
         }
-        Set<String> hashes = new LinkedHashSet<>();
+        Map<String, Build> bySha = new LinkedHashMap<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.isEmpty() || line.startsWith("#")) {
@@ -79,9 +106,22 @@ public final class OfficialBuilds {
             if (f.length != 4 || !f[0].equals("build") || !Digests.isSha256Hex(f[1])) {
                 throw new GeneralSecurityException("malformed build line: " + line);
             }
-            hashes.add(f[1]);
+            try {
+                bySha.putIfAbsent(f[1], new Build(f[1], f[2], f[3]));
+            } catch (IllegalArgumentException e) {
+                throw new GeneralSecurityException("malformed build line: " + line);
+            }
         }
-        return new OfficialBuilds(hashes);
+        return new OfficialBuilds(new ArrayList<>(bySha.values()));
+    }
+
+    /** ビルド一覧から署名前の本文({@link #HEADER} 行から始まる)を作る。 */
+    public static String bodyOf(List<Build> builds) {
+        StringBuilder sb = new StringBuilder(HEADER).append('\n');
+        for (Build b : builds) {
+            sb.append("build ").append(b.sha256()).append(' ').append(b.version()).append(' ').append(b.loader()).append('\n');
+        }
+        return sb.toString();
     }
 
     /** リリース担当(CI)用: 本文({@link #HEADER} 行から始まる)に署名して完全なファイル内容を返す。 */

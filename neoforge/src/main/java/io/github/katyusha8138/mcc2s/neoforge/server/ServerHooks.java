@@ -10,16 +10,24 @@ import io.github.katyusha8138.mcc2s.common.ServerVerification;
 import io.github.katyusha8138.mcc2s.neoforge.FmlInfo;
 import io.github.katyusha8138.mcc2s.neoforge.VerifyPayload;
 import java.net.SocketAddress;
+import io.github.katyusha8138.mcc2s.common.Reverifier;
+import io.github.katyusha8138.mcc2s.core.handshake.Fragmenter;
+import io.github.katyusha8138.mcc2s.core.wire.WireException;
 import java.security.SecureRandom;
 import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.network.Connection;
+import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ConfigurationTask;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.network.configuration.ICustomConfigurationTask;
@@ -34,9 +42,16 @@ import net.neoforged.neoforge.server.ServerLifecycleHooks;
 public final class ServerHooks {
     private static final ConfigurationTask.Type TASK_TYPE = new ConfigurationTask.Type("mcc2s:verify");
     private static final Map<Connection, ServerVerification> SESSIONS = new ConcurrentHashMap<>();
+    /** 「構成が変わった」通知による再検証の最小間隔(連打で負荷が上がらないように)。 */
+    private static final long REVERIFY_MIN_GAP_MILLIS = 10_000;
     private static volatile ServerRuntime runtime;
+    private static volatile Reverifier<UUID> reverifier;
 
     private ServerHooks() {}
+
+    static ServerRuntime runtime() {
+        return runtime;
+    }
 
     /**
      * TCP リスナーの起動より前に発火するため、最初の接続が来る時点で必ず初期化済みになる。
@@ -59,7 +74,11 @@ public final class ServerHooks {
                     FmlInfo.selfVersion(),
                     "mcC2S: " + Sanitize.text(server.getMotd(), 48),
                     FmlInfo.LOG);
-            runtime = ServerRuntime.start(inputs, new SecureRandom());
+            ServerRuntime rt = ServerRuntime.start(inputs, new SecureRandom());
+            runtime = rt;
+            // 間隔は再検証のたびに現在のポリシーから読む(/mcc2s reload が次回から反映される)
+            reverifier = new Reverifier<>(
+                    rt.timer(), new Random(), () -> Reverifier.intervalsOf(rt.context().policy()), REVERIFY_MIN_GAP_MILLIS);
         } catch (Exception e) {
             throw new IllegalStateException("mcC2S could not start: " + e.getMessage()
                     + " (fix config/mcc2s/ and restart; the server is not started without verification)", e);
@@ -68,8 +87,13 @@ public final class ServerHooks {
 
     public static void onServerStopped(ServerStoppedEvent event) {
         ServerRuntime rt = runtime;
+        Reverifier<UUID> rv = reverifier;
         runtime = null;
+        reverifier = null;
         SESSIONS.clear();
+        if (rv != null) {
+            rv.stopAll();
+        }
         if (rt != null) {
             rt.close();
         }
@@ -85,13 +109,102 @@ public final class ServerHooks {
         event.register(new VerifyTask(impl));
     }
 
-    /** クライアント→サーバーのチャンク。 */
+    // ---- プレイ中の再検証 ----
+
+    /** 参加(=検証通過)後、ランダムな間隔での再検証を予約する。 */
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        Reverifier<UUID> rv = reverifier;
+        if (rv == null || !(event.getEntity() instanceof ServerPlayer player) || player.connection.getConnection().isMemoryConnection()) {
+            return;
+        }
+        rv.start(player.getUUID(), () -> startRecheck(player));
+    }
+
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        Reverifier<UUID> rv = reverifier;
+        if (rv != null) {
+            rv.stop(event.getEntity().getUUID());
+        }
+    }
+
+    /** timer スレッドから呼ばれる。実際の処理はサーバースレッドで行う。 */
+    private static void startRecheck(ServerPlayer player) {
+        ServerRuntime rt = runtime;
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        Reverifier<UUID> rv = reverifier;
+        if (rt == null || server == null || rv == null) {
+            return;
+        }
+        server.execute(() -> {
+            var listener = player.connection;
+            Connection connection = listener.getConnection();
+            UUID id = player.getUUID();
+            if (!connection.isConnected()) {
+                rv.stop(id);
+                return;
+            }
+            var profile = player.getGameProfile();
+            var who = new ServerVerification.Player(profile.getName(), id, describe(connection.getRemoteAddress()));
+            var verification = new ServerVerification(rt.context(), who, new ServerVerification.Transport() {
+                @Override
+                public void send(byte[] chunk) {
+                    listener.send(new VerifyPayload(chunk));
+                }
+
+                @Override
+                public void kick(String message) {
+                    rv.stop(id);
+                    server.execute(() -> {
+                        if (connection.isConnected()) {
+                            listener.disconnect(Component.literal(message));
+                        }
+                    });
+                }
+
+                @Override
+                public void allow() {
+                    rv.completed(id);
+                }
+            }, true);
+
+            SESSIONS.put(connection, verification);
+            if (!listener.hasChannel(VerifyPayload.TYPE)) {
+                verification.onClientLacksMod();
+                return;
+            }
+            rt.timer().schedule(verification::onTimeout, verification.policy().handshakeTimeoutSeconds(), TimeUnit.SECONDS);
+            verification.start();
+        });
+    }
+
+    /** クライアント→サーバーのチャンク(設定フェーズ・プレイフェーズ共通)。 */
     public static void handle(VerifyPayload payload, IPayloadContext context) {
+        byte[] data = payload.data();
+        // プレイ中にクライアントが「構成が変わった」と通知してきた(リソースパックの切替など)
+        if (context.protocol() == ConnectionProtocol.PLAY && isReverifyRequest(data)) {
+            Reverifier<UUID> rv = reverifier;
+            if (rv != null) {
+                rv.requestSoon(context.player().getUUID());
+            }
+            return;
+        }
         ServerVerification v = SESSIONS.get(context.connection());
         if (v != null) {
-            v.onChunk(payload.data());
+            v.onChunk(data);
         }
         // 要求していない接続からのチャンクは無視する
+    }
+
+    private static boolean isReverifyRequest(byte[] data) {
+        try {
+            return Fragmenter.Chunk.decode(data).type() == Fragmenter.TYPE_REVERIFY_REQUEST;
+        } catch (WireException e) {
+            return false; // 不正なデータはセッション側が検証して切断する
+        }
+    }
+
+    private static String describe(SocketAddress address) {
+        return address == null ? "unknown" : address.toString();
     }
 
     private static final class VerifyTask implements ICustomConfigurationTask {
@@ -154,10 +267,6 @@ public final class ServerHooks {
             }
             rt.timer().schedule(verification::onTimeout, verification.policy().handshakeTimeoutSeconds(), TimeUnit.SECONDS);
             verification.start();
-        }
-
-        private static String describe(SocketAddress address) {
-            return address == null ? "unknown" : address.toString();
         }
     }
 }

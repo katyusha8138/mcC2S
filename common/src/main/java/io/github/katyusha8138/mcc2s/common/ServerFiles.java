@@ -44,6 +44,8 @@ public final class ServerFiles {
     public static final String REFERENCE_DIR = "reference";
     public static final String OFFICIAL_BUILDS = "official-builds.txt";
     private static final String SECRETS_HEADER = "mcc2s-pack-secrets-v1";
+    /** 猶予中の旧鍵として残す最大数。 */
+    public static final int MAX_PREVIOUS_SECRETS = 3;
 
     public static final class Loaded {
         private final Ed25519Identity identity;
@@ -121,6 +123,38 @@ public final class ServerFiles {
         writeAtomic(trustPath, new TrustFile(serverLabel, identity.publicKey(), current).toText(), false);
 
         return new Loaded(identity, secrets, policy, trustPath);
+    }
+
+    public static Ed25519Identity readIdentity(Path configDir) throws IOException, GeneralSecurityException {
+        return Ed25519Identity.parse(Files.readString(configDir.resolve(IDENTITY), StandardCharsets.UTF_8));
+    }
+
+    /** 先頭が現行の pack_secret、以降がローテーション猶予中の旧鍵。 */
+    public static List<PackSecret> readSecrets(Path configDir) throws IOException, GeneralSecurityException {
+        return parseSecrets(Files.readString(configDir.resolve(SECRETS), StandardCharsets.UTF_8));
+    }
+
+    /** 配布用の信頼ファイルを書き出す(現行の pack_secret を使う)。 */
+    public static Path writeTrustFile(Path configDir, String label, Ed25519Identity identity, PackSecret current) throws IOException {
+        Files.createDirectories(configDir.resolve(TRUST_DIR));
+        Path path = configDir.resolve(TRUST_DIR).resolve("server-" + Digests.hex(identity.keyId()) + ".mc2strust");
+        writeAtomic(path, new TrustFile(label, identity.publicKey(), current).toText(), false);
+        return path;
+    }
+
+    /**
+     * pack_secret のローテーション: 新しい秘密を現行にし、これまでの現行を猶予中の旧鍵に移す(最大 {@link #MAX_PREVIOUS_SECRETS} 個)。
+     * 旧鍵の信頼ファイルを持つプレイヤーも、旧鍵を削除するまでは参加できる。新しい信頼ファイルを再生成して返す。
+     */
+    public static Path rotateSecret(Path configDir, String label, SecureRandom rnd) throws IOException, GeneralSecurityException {
+        Ed25519Identity identity = readIdentity(configDir);
+        List<PackSecret> old = readSecrets(configDir);
+        PackSecret fresh = PackSecret.generate(rnd);
+        List<PackSecret> next = new ArrayList<>();
+        next.add(fresh);
+        next.addAll(old.subList(0, Math.min(old.size(), MAX_PREVIOUS_SECRETS)));
+        writeAtomic(configDir.resolve(SECRETS), secretsText(next), true);
+        return writeTrustFile(configDir, label, identity, fresh);
     }
 
     public static PolicyConfig loadPolicy(Path policyPath) throws IOException, PolicyConfigException {

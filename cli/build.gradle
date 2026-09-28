@@ -1,0 +1,52 @@
+plugins {
+    id 'java'
+}
+
+// 運営者・リリース担当が使う単体の CLI。`java -jar mcc2s-cli.jar <コマンド>` で動く。
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:all', '-Werror']
+}
+
+dependencies {
+    implementation project(':common')
+    // core は night-config を compileOnly にしている(Mod 内では FML が提供)。CLI は単体で動く必要があるので同梱する。
+    runtimeOnly 'com.electronwill.night-config:toml:3.6.7'
+    // policy.toml の検証(TomlPolicyLoader)と jar 内 mods.toml の読み取りにコンパイル時にも使う
+    implementation 'com.electronwill.night-config:toml:3.6.7'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+base {
+    archivesName = 'mcc2s-cli'
+}
+
+// 依存をすべて同梱した実行可能 jar
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes(
+            'Main-Class': 'io.github.katyusha8138.mcc2s.cli.Main',
+            'Implementation-Title': 'mcc2s-cli',
+            'Implementation-Version': mcc2s_version
+        )
+    }
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/MANIFEST.MF', 'module-info.class'
+    }
+    from(rootProject.file('LICENSE'))
+}
