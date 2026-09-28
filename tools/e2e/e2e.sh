@@ -104,6 +104,15 @@ start_server() {
   grep -q 'Done (' "$SERVER_LOG"
 }
 
+# 有効な zip(jar)だが Mod ではないファイル(mods.toml なし)を作る。壊れた zip を置くと FML が起動エラーになる。
+make_plain_jar() {
+  python3 - "$1" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("hello.txt", "not a mod")
+PY
+}
+
 install_trust() { cp -f "$RUN"/server/config/mcc2s/trust/*.mc2strust "$RUN/client/config/mcc2s/trust/"; }
 
 # 実クライアントを起動し、サーバーが名前入りの判定ログを出すまで待つ。ログのパスは CLIENT_LOG に入る。
@@ -113,11 +122,14 @@ run_client() {
   local name="$1"
   CLIENT_LOG="$OUT/client-$name.log"
   : > "$CLIENT_LOG"
+  # ログは 40MB で打ち切る(FML の起動エラーで確認プロンプトが無限に出力されても、ディスクを埋めないため)
   {
     cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
-      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
+      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain 2>&1 \
+      | head -c 41943040
   } > "$CLIENT_LOG" 2>&1 < /dev/null &
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 60); do
+    if grep -q "y/n:" "$CLIENT_LOG" 2>/dev/null; then log "  client crashed during startup (see $CLIENT_LOG)"; break; fi
     if grep -qE "\[mcC2S\] $name verified|\[mcC2S\] (DENIED|AUDIT_ALLOWED) $name|$name joined the game|Client disconnected with reason" "$SERVER_LOG" "$CLIENT_LOG" 2>/dev/null; then
       sleep 4
       break
@@ -134,10 +146,19 @@ stop_client() {
   sleep 4
 }
 
-expect() { # expect <説明> <ファイル> <正規表現>
-  if grep -qE "$3" "$2" 2>/dev/null; then log "  PASS: $1"; PASS=$((PASS+1)); else log "  FAIL: $1  (pattern '$3' not found in $2)"; FAIL=$((FAIL+1)); fi
+# ログはプロセス間を経由して少し遅れて書かれるため、最大 15 秒リトライして判定する
+wait_for() { # wait_for <ファイル> <正規表現>
+  for _ in $(seq 1 15); do
+    grep -qE "$2" "$1" 2>/dev/null && return 0
+    sleep 1
+  done
+  return 1
 }
-expect_not() {
+expect() { # expect <説明> <ファイル> <正規表現>
+  if wait_for "$2" "$3"; then log "  PASS: $1"; PASS=$((PASS+1)); else log "  FAIL: $1  (pattern '$3' not found in $2)"; FAIL=$((FAIL+1)); fi
+}
+expect_not() { # 一定時間待っても現れないこと
+  sleep 3
   if grep -qE "$3" "$2" 2>/dev/null; then log "  FAIL: $1  (unexpected '$3' in $2)"; FAIL=$((FAIL+1)); else log "  PASS: $1"; PASS=$((PASS+1)); fi
 }
 
@@ -172,7 +193,7 @@ scenario_notrust() {
 scenario_extrajar() {
   log "== extrajar: unregistered jar in mods/"
   install_trust
-  printf 'not a real mod' > "$RUN/client/mods/hidden-cheat-loader.jar"
+  make_plain_jar "$RUN/client/mods/hidden-cheat-loader.jar"
   run_client SneakySam; local clog="$CLIENT_LOG"
   expect "server denied the client" "$SERVER_LOG" "\[mcC2S\] DENIED SneakySam"
   expect "the hidden jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[hidden-cheat-loader.jar\]"
@@ -185,7 +206,7 @@ scenario_extrajar() {
 scenario_audit() {
   log "== audit: violations are logged but the client is admitted"
   install_trust
-  printf 'not a real mod' > "$RUN/client/mods/hidden-cheat-loader.jar"
+  make_plain_jar "$RUN/client/mods/hidden-cheat-loader.jar"
   run_client AuditAmy; local clog="$CLIENT_LOG"
   expect "logged as AUDIT_ALLOWED" "$SERVER_LOG" "\[mcC2S\] AUDIT_ALLOWED AuditAmy"
   expect "player joined the world" "$SERVER_LOG" "AuditAmy joined the game"
