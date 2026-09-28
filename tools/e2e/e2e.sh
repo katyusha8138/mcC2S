@@ -285,6 +285,9 @@ scenario_onchange() {
   run_client OnChangeOli; local clog="$CLIENT_LOG"
   expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"
   local disp; disp=$(xvfb_display)
+  # 診断: 参加の数秒後と、キー入力の前の画面(死亡画面などでキーが効かない場合の切り分け用)
+  sleep 4
+  XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/screenshot.py" "$disp" "$OUT/onchange-join.png" 2>/dev/null
   local before; before=$(grep -c "Reloading ResourceManager" "$clog")
   # ソフトウェア描画は遅く、参加直後は「地形を読み込み中」でキーが効かないため、リソースが再読み込みされるまで 5 秒おきに押し直す
   local reloaded=0
