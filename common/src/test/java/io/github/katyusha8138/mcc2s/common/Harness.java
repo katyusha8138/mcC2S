@@ -66,6 +66,10 @@ final class Harness {
     PolicyConfig policy = PolicyConfig.defaults();
     List<EntrySeed> serverOwn = new ArrayList<>();
     ReferenceIndex references;
+    /** 直近の connect で使われたサーバー側コンテキスト(統計の確認用)。 */
+    ServerContext lastContext;
+    /** true なら ServerVerification を再検証モードで作る。 */
+    boolean recheck;
     io.github.katyusha8138.mcc2s.core.policy.ReferenceResolver referencesOverride;
     String serverSelfSha;
     TrustStore clientTrust;
@@ -77,6 +81,11 @@ final class Harness {
         identity = Ed25519Identity.generate(RND);
         secret = PackSecret.generate(RND);
         clientTrust = new TrustStore(List.of(new TrustFile("test", identity.publicKey(), secret)));
+    }
+
+    static String sha(String seed) {
+        return io.github.katyusha8138.mcc2s.core.crypto.Digests.hex(
+                io.github.katyusha8138.mcc2s.core.crypto.Digests.sha256(seed.getBytes(StandardCharsets.UTF_8)));
     }
 
     Path file(Path dir, String name, String content) throws IOException {
@@ -153,6 +162,7 @@ final class Harness {
     Outcome connect(String playerName, Seeds clientSeeds, Supplier<TrustStore> trust, java.util.Set<Scope> reported)
             throws Exception {
         ServerContext ctx = serverContext();
+        lastContext = ctx;
         Outcome out = new Outcome();
         Deque<byte[]> toClient = new ArrayDeque<>();
         Deque<byte[]> toServer = new ArrayDeque<>();
@@ -176,7 +186,8 @@ final class Harness {
                     public void allow() {
                         out.allowed = true;
                     }
-                });
+                },
+                recheck);
 
         ClientVerification client = new ClientVerification(
                 trust,

@@ -55,14 +55,23 @@ public final class ServerVerification {
     private final Player player;
     private final Transport transport;
     private final PolicyConfig policy;
+    private final boolean recheck;
     private ServerHandshake handshake;
     private Reassembler reassembler;
     private State state = State.AWAIT_ATTESTATION;
 
     public ServerVerification(ServerContext ctx, Player player, Transport transport) {
+        this(ctx, player, transport, false);
+    }
+
+    /**
+     * @param recheck プレイ中の再検証か(統計とログの表記が変わる。判定の厳格さは参加時と同じ)
+     */
+    public ServerVerification(ServerContext ctx, Player player, Transport transport, boolean recheck) {
         this.ctx = ctx;
         this.player = player;
         this.transport = transport;
+        this.recheck = recheck;
         this.policy = ctx.policy(); // 接続中にポリシーが変わっても、この接続には開始時点のものを一貫して適用する
     }
 
@@ -127,8 +136,9 @@ public final class ServerVerification {
             }
             state = State.DONE;
         }
-        ctx.log().warn("[mcC2S] " + player.name() + " (" + player.id() + ") did not answer within "
-                + policy.handshakeTimeoutSeconds() + "s (client probably lacks mcC2S or the trust file); kicking");
+        ctx.log().warn("[mcC2S] " + player.name() + " (" + player.id() + ") did not answer" + (recheck ? " the re-verification" : "")
+                + " within " + policy.handshakeTimeoutSeconds() + "s (client probably lacks mcC2S or the trust file); kicking");
+        count(ServerStats.Counter.TIMEOUT);
         transport.kick(Messages.timeout());
     }
 
@@ -142,6 +152,7 @@ public final class ServerVerification {
         }
         ctx.log().warn("[mcC2S] " + player.name() + " (" + player.id() + ") from " + player.address()
                 + " does not have mcC2S installed; kicking");
+        count(ServerStats.Counter.MISSING_MOD);
         transport.kick(Messages.required());
     }
 
@@ -173,6 +184,7 @@ public final class ServerVerification {
 
             if (!permit) {
                 finish(State.DONE);
+                count(ServerStats.Counter.DENIED);
                 String ref = "MC2S-" + Digests.hex(refId).toUpperCase(Locale.ROOT);
                 transport.kick(Messages.denied(ref, policy.showDetailsToPlayer() ? eval.violations() : null));
                 return;
@@ -185,8 +197,11 @@ public final class ServerVerification {
             for (Fragmenter.Chunk c : Fragmenter.split(Fragmenter.TYPE_VERDICT, sealed, ServerContext.CHUNK_BYTES)) {
                 transport.send(c.encode());
             }
-            ctx.log().info("[mcC2S] " + player.name() + " verified (" + manifest.entries().size() + " entries"
-                    + (status == ServerVerdict.Status.AUDIT_ALLOWED ? ", audit mode: violations logged" : "") + ")");
+            ctx.log().info("[mcC2S] " + player.name() + (recheck ? " re-verified (" : " verified (") + manifest.entries().size()
+                    + " entries" + (status == ServerVerdict.Status.AUDIT_ALLOWED ? ", audit mode: violations logged" : "") + ")");
+            ctx.stats().inc(recheck
+                    ? ServerStats.Counter.REVERIFIED
+                    : (status == ServerVerdict.Status.AUDIT_ALLOWED ? ServerStats.Counter.AUDIT_ALLOWED : ServerStats.Counter.VERIFIED));
             transport.allow();
         } catch (HandshakeException e) {
             finish(State.DONE);
@@ -195,9 +210,18 @@ public final class ServerVerification {
             String ref = "MC2S-" + Digests.hex(refId).toUpperCase(Locale.ROOT);
             ctx.log().warn("[mcC2S] handshake failed for " + player.name() + " (" + player.id() + ") from "
                     + player.address() + ": " + e.reason() + " ref=" + ref);
+            count(ServerStats.Counter.HANDSHAKE_FAILED);
             transport.kick(Messages.failed(ref));
         } catch (Throwable t) {
             failClosed("unexpected error while verifying " + player.name(), t);
+        }
+    }
+
+    /** 切断につながる結果を数える。再検証での切断は REVERIFY_KICKED にも計上する。 */
+    private void count(ServerStats.Counter c) {
+        ctx.stats().inc(c);
+        if (recheck) {
+            ctx.stats().inc(ServerStats.Counter.REVERIFY_KICKED);
         }
     }
 
@@ -208,6 +232,7 @@ public final class ServerVerification {
     private void failClosed(String what, Throwable cause) {
         finish(State.DONE);
         ctx.log().error("[mcC2S] " + what, cause);
+        count(ServerStats.Counter.HANDSHAKE_FAILED);
         byte[] refId = new byte[ServerVerdict.REF_ID_LEN];
         ctx.random().nextBytes(refId);
         transport.kick(Messages.failed("MC2S-" + Digests.hex(refId).toUpperCase(Locale.ROOT)));

@@ -28,6 +28,8 @@ require_reference = false
 # プレイ中のランダム再検証(ログイン後に導入されたチートの検知)。
 [reverify]
 enabled = true
+# リソースパックの切り替え(リソースの再読み込み)を検知したら、次の定期検証を待たずに再検証する
+on_change = true
 min_seconds = 300
 max_seconds = 900
 

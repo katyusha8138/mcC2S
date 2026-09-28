@@ -20,6 +20,7 @@ public final class PolicyConfig {
     private final int handshakeTimeoutSeconds;
     private final boolean showDetailsToPlayer;
     private final boolean reverifyEnabled;
+    private final boolean reverifyOnChange;
     private final int reverifyMinSeconds;
     private final int reverifyMaxSeconds;
     private final Map<EntryKind, KindPolicy> kinds;
@@ -44,6 +45,7 @@ public final class PolicyConfig {
         this.handshakeTimeoutSeconds = b.handshakeTimeoutSeconds;
         this.showDetailsToPlayer = b.showDetailsToPlayer;
         this.reverifyEnabled = b.reverifyEnabled;
+        this.reverifyOnChange = b.reverifyOnChange;
         this.reverifyMinSeconds = b.reverifyMinSeconds;
         this.reverifyMaxSeconds = b.reverifyMaxSeconds;
         EnumMap<EntryKind, KindPolicy> map = new EnumMap<>(EntryKind.class);
@@ -93,6 +95,11 @@ public final class PolicyConfig {
         return reverifyEnabled;
     }
 
+    /** クライアントがリソースパックを切り替えたとき(再読み込み時)に、次の定期検証を待たず即座に再検証する。 */
+    public boolean reverifyOnChange() {
+        return reverifyOnChange;
+    }
+
     public int reverifyMinSeconds() {
         return reverifyMinSeconds;
     }
@@ -117,6 +124,7 @@ public final class PolicyConfig {
         private int handshakeTimeoutSeconds = 30;
         private boolean showDetailsToPlayer = false;
         private boolean reverifyEnabled = true;
+        private boolean reverifyOnChange = true;
         private int reverifyMinSeconds = 300;
         private int reverifyMaxSeconds = 900;
         private final Map<EntryKind, KindPolicy> kinds = new EnumMap<>(EntryKind.class);
@@ -155,6 +163,11 @@ public final class PolicyConfig {
             this.reverifyEnabled = enabled;
             this.reverifyMinSeconds = minSeconds;
             this.reverifyMaxSeconds = maxSeconds;
+            return this;
+        }
+
+        public Builder reverifyOnChange(boolean v) {
+            this.reverifyOnChange = v;
             return this;
         }
 

@@ -29,6 +29,7 @@ class TomlPolicyLoaderTest {
         assertEquals(defaults.handshakeTimeoutSeconds(), cfg.handshakeTimeoutSeconds());
         assertEquals(defaults.showDetailsToPlayer(), cfg.showDetailsToPlayer());
         assertEquals(defaults.reverifyEnabled(), cfg.reverifyEnabled());
+        assertEquals(defaults.reverifyOnChange(), cfg.reverifyOnChange());
         assertEquals(defaults.reverifyMinSeconds(), cfg.reverifyMinSeconds());
         assertEquals(defaults.reverifyMaxSeconds(), cfg.reverifyMaxSeconds());
         for (EntryKind k : EntryKind.values()) {
@@ -54,7 +55,7 @@ class TomlPolicyLoaderTest {
                 + "show_details_to_player = true\n"
                 + "proof_rate_percent = 35\n"
                 + "require_reference = true\n"
-                + "[reverify]\nenabled = false\nmin_seconds = 60\nmax_seconds = 120\n"
+                + "[reverify]\nenabled = false\non_change = false\nmin_seconds = 60\nmax_seconds = 120\n"
                 + "[mods]\nmatch = \"hash\"\nallow_server_baseline = false\n"
                 + "[[mods.allow]]\nid = \"sodium\"\nsha256 = [\"" + H1 + "\", \"" + H2.toUpperCase() + "\"]\nnote = \"perf\"\n"
                 + "[[mods.allow]]\nsha256 = \"" + H2 + "\"\n"
@@ -67,6 +68,7 @@ class TomlPolicyLoaderTest {
         assertEquals(35, cfg.proofRatePercent());
         assertTrue(cfg.requireReference());
         assertFalse(cfg.reverifyEnabled());
+        assertFalse(cfg.reverifyOnChange());
         assertEquals(60, cfg.reverifyMinSeconds());
         assertFalse(cfg.kindPolicy(EntryKind.MOD).allowBaseline());
         assertEquals(2, cfg.kindPolicy(EntryKind.MOD).allow().size());
@@ -95,6 +97,7 @@ class TomlPolicyLoaderTest {
         rejects("handshake_timeout_seconds = 1", "5..300");
         rejects("require_reference = \"yes\"", "true or false");
         rejects("[reverify]\nmin_seconds = 10", "reverify");
+        rejects("[reverify]\non_change = \"yes\"", "true or false");
         rejects("[reverify]\nmin_seconds = 500\nmax_seconds = 100", "reverify");
         rejects("this is not toml", "invalid TOML");
     }

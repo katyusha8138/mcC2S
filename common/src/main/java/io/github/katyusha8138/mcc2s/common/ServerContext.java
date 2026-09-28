@@ -31,6 +31,7 @@ public final class ServerContext {
     private final SecureRandom random;
     private final Executor worker;
     private final Clock clock;
+    private final ServerStats stats;
 
     private ServerContext(Builder b) {
         this.identity = Objects.requireNonNull(b.identity, "identity");
@@ -44,6 +45,7 @@ public final class ServerContext {
         this.random = b.random == null ? new SecureRandom() : b.random;
         this.worker = Objects.requireNonNull(b.worker, "worker");
         this.clock = b.clock == null ? Clock.systemUTC() : b.clock;
+        this.stats = b.stats == null ? new ServerStats() : b.stats;
     }
 
     public Ed25519Identity identity() {
@@ -93,6 +95,27 @@ public final class ServerContext {
         return clock;
     }
 
+    public ServerStats stats() {
+        return stats;
+    }
+
+    /** 設定の再読込などで一部だけ差し替えた新しいコンテキストを作る(統計・ワーカー等は共有される)。 */
+    public Builder toBuilder() {
+        return new Builder()
+                .identity(identity)
+                .secrets(secrets)
+                .policy(policy)
+                .baseline(baseline)
+                .trustedSelfHashes(trustedSelfHashes)
+                .references(references)
+                .sink(sink)
+                .log(log)
+                .random(random)
+                .worker(worker)
+                .clock(clock)
+                .stats(stats);
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -109,6 +132,12 @@ public final class ServerContext {
         private SecureRandom random;
         private Executor worker;
         private Clock clock;
+        private ServerStats stats;
+
+        public Builder stats(ServerStats v) {
+            this.stats = v;
+            return this;
+        }
 
         public Builder identity(Ed25519Identity v) {
             this.identity = v;

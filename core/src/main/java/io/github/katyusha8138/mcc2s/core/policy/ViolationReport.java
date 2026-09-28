@@ -37,6 +37,26 @@ public final class ViolationReport {
         this.violations = new ArrayList<>(violations);
     }
 
+    public Instant time() {
+        return time;
+    }
+
+    public String playerName() {
+        return playerName;
+    }
+
+    public UUID playerId() {
+        return playerId;
+    }
+
+    public ServerVerdict.Status action() {
+        return action;
+    }
+
+    public List<Violation> violations() {
+        return new ArrayList<>(violations);
+    }
+
     /** プレイヤーに見せる参照コード(例: {@code MC2S-1A2B3C4D5E6F7A8B})。ログの行と突き合わせられる。 */
     public String refCode() {
         return "MC2S-" + Digests.hex(refId).toUpperCase(java.util.Locale.ROOT);

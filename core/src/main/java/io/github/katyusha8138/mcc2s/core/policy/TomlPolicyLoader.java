@@ -27,7 +27,7 @@ public final class TomlPolicyLoader {
             "mode", "scopes", "handshake_timeout_seconds", "show_details_to_player", "proof_rate_percent",
             "require_reference", "reverify", "mods", "libraries", "resource_packs", "shader_packs", "agents",
             "other_code");
-    private static final Set<String> REVERIFY_KEYS = Set.of("enabled", "min_seconds", "max_seconds");
+    private static final Set<String> REVERIFY_KEYS = Set.of("enabled", "on_change", "min_seconds", "max_seconds");
     private static final Set<String> SECTION_KEYS = Set.of("match", "allow_server_baseline", "allow");
     private static final Set<String> ALLOW_KEYS = Set.of("id", "version", "sha256", "note");
 
@@ -77,6 +77,7 @@ public final class TomlPolicyLoader {
                 UnmodifiableConfig r = table(rv, "reverify");
                 checkKeys(r, "reverify.", REVERIFY_KEYS);
                 b.reverify(bool(r, "enabled", true), integer(r, "min_seconds", 300), integer(r, "max_seconds", 900));
+                b.reverifyOnChange(bool(r, "on_change", true));
             }
 
             for (String[] sec : SECTIONS) {

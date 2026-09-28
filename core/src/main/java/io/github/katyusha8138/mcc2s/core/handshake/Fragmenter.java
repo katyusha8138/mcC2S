@@ -18,6 +18,8 @@ public final class Fragmenter {
     public static final int TYPE_CHALLENGE = 1;
     public static final int TYPE_ATTESTATION = 2;
     public static final int TYPE_VERDICT = 3;
+    /** クライアント→サーバー: 構成が変わったので再検証してほしい(リソースパックの切替など)。本体は空。 */
+    public static final int TYPE_REVERIFY_REQUEST = 4;
 
     /** チャンクのヘッダ分(type 1 + index 2 + total 2 + 長さ 4)。 */
     public static final int HEADER_BYTES = 9;
