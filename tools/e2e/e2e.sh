@@ -182,6 +182,11 @@ xvfb_display() {
   pgrep -a Xvfb 2>/dev/null | grep -o ' :[0-9]*' | head -1 | tr -d ' '
 }
 
+# xvfb-run が使っている X の認証ファイル(-auth の値)。これが無いと仮想ディスプレイに接続できない。
+xvfb_auth() {
+  pgrep -a Xvfb 2>/dev/null | grep -o -- '-auth [^ ]*' | head -1 | cut -d' ' -f2
+}
+
 # 仮想ディスプレイへのキー入力に python-xlib を使う(無ければ build/pylib に入れる)。使えなければ 1 を返す。
 ensure_xlib() {
   export PYTHONPATH="$ROOT/build/pylib${PYTHONPATH:+:$PYTHONPATH}"
@@ -278,7 +283,9 @@ scenario_onchange() {
   sleep 10   # ワールドの読み込みが終わり、画面を閉じた状態になるまで待つ
   local disp; disp=$(xvfb_display)
   local before; before=$(grep -c "Reloading ResourceManager" "$clog")
-  python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t
+  if ! XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t; then
+    log "  (keypress helper failed; see the output above)"
+  fi
   # 起動時の再読み込みと区別するため、「押した後に回数が増えた」ことを確かめる
   local reloaded=0
   for _ in $(seq 1 30); do
