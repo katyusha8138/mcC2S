@@ -1,0 +1,29 @@
+plugins {
+    id 'java-library'
+}
+
+// common は Forge 1.20.1 (Java 17) / NeoForge 1.21.1 (Java 21) の両アダプタから使う。
+// Minecraft のクラスには依存せず、ローダー固有の情報はインターフェース越しに受け取る。
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:all', '-Werror']
+}
+
+dependencies {
+    api project(':core')
+
+    testImplementation 'com.electronwill.night-config:toml:3.6.7'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
+}
