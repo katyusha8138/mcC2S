@@ -104,11 +104,15 @@ start_server() {
   grep -q 'Done (' "$SERVER_LOG"
 }
 
-# 有効な zip(jar)だが Mod ではないファイル(mods.toml なし)を作る。壊れた zip を置くと FML が起動エラーになる。
+# FML がライブラリとして警告なしに読み込む jar(マニフェストに FMLModType)を作る。
+# mods.toml の無い jar を置くと FML は警告画面を出してクライアントが先へ進まないため、
+# 実際の攻撃(隠しライブラリ jar)と同じ形にしている。
 make_plain_jar() {
   python3 - "$1" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("META-INF/MANIFEST.MF",
+               "Manifest-Version: 1.0\r\nFMLModType: LIBRARY\r\nAutomatic-Module-Name: e2e.hiddenlib\r\n\r\n")
     z.writestr("hello.txt", "not a mod")
 PY
 }
@@ -122,11 +126,11 @@ run_client() {
   local name="$1"
   CLIENT_LOG="$OUT/client-$name.log"
   : > "$CLIENT_LOG"
-  # ログは 40MB で打ち切る(FML の起動エラーで確認プロンプトが無限に出力されても、ディスクを埋めないため)
+  # ログのファイルサイズを 40MB に制限する(FML の起動エラーで確認プロンプトが無限に出力されても、ディスクを埋めない)
   {
+    ulimit -f 40960
     cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
-      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain 2>&1 \
-      | head -c 41943040
+      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
   } > "$CLIENT_LOG" 2>&1 < /dev/null &
   for _ in $(seq 1 60); do
     if grep -q "y/n:" "$CLIENT_LOG" 2>/dev/null; then log "  client crashed during startup (see $CLIENT_LOG)"; break; fi
