@@ -106,20 +106,24 @@ start_server() {
 
 install_trust() { cp -f "$RUN"/server/config/mcc2s/trust/*.mc2strust "$RUN/client/config/mcc2s/trust/"; }
 
-# 実クライアントを起動し、サーバーが名前入りの判定ログを出すまで待つ。
+# 実クライアントを起動し、サーバーが名前入りの判定ログを出すまで待つ。ログのパスは CLIENT_LOG に入る。
+# (注意: コマンド置換 $(...) の中でバックグラウンド起動すると、子プロセスがパイプを握って戻らなくなる)
+CLIENT_LOG=""
 run_client() {
-  local name="$1" clog="$OUT/client-$1.log"
-  : > "$clog"
-  (cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 nohup xvfb-run -a -s "-screen 0 1280x720x24" \
-     ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain > "$clog" 2>&1 &)
+  local name="$1"
+  CLIENT_LOG="$OUT/client-$name.log"
+  : > "$CLIENT_LOG"
+  {
+    cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
+      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
+  } > "$CLIENT_LOG" 2>&1 < /dev/null &
   for _ in $(seq 1 120); do
-    if grep -qE "\[mcC2S\] $name verified|\[mcC2S\] DENIED $name|joined the game.*$name|$name joined the game|Client disconnected with reason" "$SERVER_LOG" "$clog" 2>/dev/null; then
+    if grep -qE "\[mcC2S\] $name verified|\[mcC2S\] (DENIED|AUDIT_ALLOWED) $name|$name joined the game|Client disconnected with reason" "$SERVER_LOG" "$CLIENT_LOG" 2>/dev/null; then
       sleep 4
       break
     fi
     sleep 3
   done
-  echo "$clog"
 }
 
 stop_client() {
@@ -148,7 +152,7 @@ scenario_vanilla() {
 scenario_trusted() {
   log "== trusted: legitimate client with the trust file"
   install_trust
-  local clog; clog=$(run_client TrustedTim)
+  run_client TrustedTim; local clog="$CLIENT_LOG"
   expect "server verified the client" "$SERVER_LOG" "\[mcC2S\] TrustedTim verified"
   expect "player joined the world" "$SERVER_LOG" "TrustedTim joined the game"
   expect_not "no violation reported" "$SERVER_LOG" "\[mcC2S\] DENIED TrustedTim"
@@ -159,7 +163,7 @@ scenario_trusted() {
 scenario_notrust() {
   log "== notrust: client without the trust file"
   rm -f "$RUN/client/config/mcc2s/trust/"*.mc2strust
-  local clog; clog=$(run_client NoTrustNed)
+  run_client NoTrustNed; local clog="$CLIENT_LOG"
   expect "client aborted with a helpful message" "$clog" "Client disconnected with reason: .*信頼ファイル"
   expect_not "never joined" "$SERVER_LOG" "NoTrustNed joined the game"
   stop_client
@@ -169,7 +173,7 @@ scenario_extrajar() {
   log "== extrajar: unregistered jar in mods/"
   install_trust
   printf 'not a real mod' > "$RUN/client/mods/hidden-cheat-loader.jar"
-  local clog; clog=$(run_client SneakySam)
+  run_client SneakySam; local clog="$CLIENT_LOG"
   expect "server denied the client" "$SERVER_LOG" "\[mcC2S\] DENIED SneakySam"
   expect "the hidden jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[hidden-cheat-loader.jar\]"
   expect "client was disconnected" "$clog" "Client disconnected with reason: .*Unauthorized"
@@ -182,7 +186,7 @@ scenario_audit() {
   log "== audit: violations are logged but the client is admitted"
   install_trust
   printf 'not a real mod' > "$RUN/client/mods/hidden-cheat-loader.jar"
-  local clog; clog=$(run_client AuditAmy)
+  run_client AuditAmy; local clog="$CLIENT_LOG"
   expect "logged as AUDIT_ALLOWED" "$SERVER_LOG" "\[mcC2S\] AUDIT_ALLOWED AuditAmy"
   expect "player joined the world" "$SERVER_LOG" "AuditAmy joined the game"
   stop_client
