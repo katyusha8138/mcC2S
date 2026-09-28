@@ -35,6 +35,8 @@ base {
 
 // 依存をすべて同梱した実行可能 jar
 jar {
+    // 同梱する依存(core / common の jar)を先に作らせる。宣言しないと並列ビルドで順序が不定になる。
+    dependsOn configurations.runtimeClasspath
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes(

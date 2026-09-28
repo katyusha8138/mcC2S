@@ -176,6 +176,20 @@ expect_not() { # 一定時間待っても現れないこと
   if grep -qE "$3" "$2" 2>/dev/null; then log "  FAIL: $1  (unexpected '$3' in $2)"; FAIL=$((FAIL+1)); else log "  PASS: $1"; PASS=$((PASS+1)); fi
 }
 
+# 実行中の Xvfb のディスプレイ番号(":99" など)を返す
+xvfb_display() {
+  pgrep -a Xvfb 2>/dev/null | grep -o ' :[0-9]*' | head -1 | tr -d ' '
+}
+
+# 仮想ディスプレイへのキー入力に python-xlib を使う(無ければ build/pylib に入れる)。使えなければ 1 を返す。
+ensure_xlib() {
+  export PYTHONPATH="$ROOT/build/pylib${PYTHONPATH:+:$PYTHONPATH}"
+  python3 -c 'import Xlib' 2>/dev/null && return 0
+  mkdir -p "$ROOT/build/pylib"
+  python3 -m pip install --quiet --target "$ROOT/build/pylib" python-xlib >/dev/null 2>&1
+  python3 -c 'import Xlib' 2>/dev/null
+}
+
 # 指定秒数まで待って判定する(定期再検証のように時間のかかる事象用)
 expect_within() { # expect_within <秒> <説明> <ファイル> <正規表現>
   local secs="$1"
@@ -251,18 +265,37 @@ scenario_reverify() {
   stop_client
 }
 
+scenario_onchange() {
+  log "== onchange: a resource reload (e.g. switching resource packs) triggers an immediate re-verification"
+  if ! ensure_xlib; then
+    log "  SKIP: python-xlib is not available (pip install python-xlib)"
+    return 0
+  fi
+  install_trust
+  run_client OnChangeOli; local clog="$CLIENT_LOG"
+  expect "joined the world" "$SERVER_LOG" "OnChangeOli joined the game"
+  sleep 10   # ワールドの読み込みが終わり、画面を閉じた状態になるまで待つ
+  local disp; disp=$(xvfb_display)
+  python3 "$ROOT/tools/e2e/keypress.py" "$disp" F3+t
+  # 定期検証(既定 300 秒以上)ではなく、リソース再読み込みの通知で再検証されたことを確かめる
+  expect_within 30 "the reload really happened on the client (F3+T)" "$clog" "Reloading ResourceManager"
+  expect_within 40 "the server re-verified the player right after the reload notification" "$SERVER_LOG" "\[mcC2S\] OnChangeOli re-verified"
+  stop_client
+}
+
 # シナリオごとに必要なサーバー設定(プロファイル)。プロファイルが変わるときだけサーバーを再起動する。
 profile_of() {
   case "$1" in
     audit) echo "audit 300 900" ;;
     reverify) echo "enforce 30 35" ;;
+    onchange) echo "enforce 600 900" ;;
     *) echo "enforce 300 900" ;;
   esac
 }
 
 main() {
   local scenarios=("$@")
-  [ ${#scenarios[@]} -eq 0 ] && scenarios=(vanilla trusted notrust extrajar reverify audit)
+  [ ${#scenarios[@]} -eq 0 ] && scenarios=(vanilla trusted notrust extrajar reverify onchange audit)
   prepare
   local current=""
   for s in "${scenarios[@]}"; do
