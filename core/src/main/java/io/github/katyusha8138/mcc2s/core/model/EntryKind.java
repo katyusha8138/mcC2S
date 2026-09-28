@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 mcC2S contributors
+
 package io.github.katyusha8138.mcc2s.core.model;
 
 /** マニフェスト項目の種別。ワイヤー上のコードは固定(変更不可)。 */

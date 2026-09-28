@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 mcC2S contributors
+
 package io.github.katyusha8138.mcc2s.core.handshake;
 
 /** プロトコル内の全ドメイン分離ラベル。ラベルが異なれば同じ入力でも出力が衝突しない。 */

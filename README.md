@@ -16,6 +16,7 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 通信路・プロトコルは暗号学的に強く守り(なりすまし・リプレイ・改ざん・ダウングレード)、
 クライアントの誠実さについては攻撃コストの引き上げと検知に重点を置きます。
 詳細と残余リスクは [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)、通信仕様は [docs/PROTOCOL.md](docs/PROTOCOL.md) を参照してください。
+プロキシ経由サーバーは現状未対応ですが、拡張余地を [docs/PROXY.md](docs/PROXY.md) にまとめています。
 
 ## 構成
 
@@ -24,6 +25,10 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 | `core/` | 暗号ハンドシェイク・マニフェスト・ポリシー・設定・署名(Minecraft 非依存、Java 17 API) | 実装済み・テスト済み |
 | `neoforge/` | NeoForge 1.21.1 アダプタ | 未着手(M2) |
 | `forge/` | Forge 1.20.1 アダプタ | 未着手(M4) |
+
+## ライセンス
+
+[GNU GPL v3.0 or later](LICENSE)。方針の詳細は [docs/LICENSING.md](docs/LICENSING.md)。
 
 ## ビルドとテスト
 

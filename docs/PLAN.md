@@ -42,10 +42,10 @@ cli/       鍵生成・信頼ファイル生成・ハッシュ生成・リリー
 
 M2 以降のビルドには、Forge/NeoForge/Mojang の Maven・配布ホストへの到達が必要:
 `maven.neoforged.net` / `maven.minecraftforge.net` / `piston-meta.mojang.com` / `piston-data.mojang.com` /
-`libraries.minecraft.net`(セッションのネットワーク許可に追加が必要)。
+`libraries.minecraft.net`(許可済み)。
 
 ## 未決事項
 
-- ライセンス(OSS の種類。mods.toml に必須)
+- ライセンスは GPL-3.0-or-later で進行中(`docs/LICENSING.md`)。`or-later` か `only` かの最終確認
 - リリース署名鍵の生成と保管(CI のシークレット)
-- Velocity/BungeeCord 等のプロキシ経由サーバーへの対応(現状は直結を想定)
+- Velocity/BungeeCord 等のプロキシ経由サーバーへの対応(直結を想定。拡張余地は `docs/PROXY.md`)

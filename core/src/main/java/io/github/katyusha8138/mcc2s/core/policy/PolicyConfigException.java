@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 mcC2S contributors
+
 package io.github.katyusha8138.mcc2s.core.policy;
 
 /** ポリシー設定ファイルの誤り。誤設定で意図せず許可が広がらないよう、曖昧な設定は起動時に拒否する。 */

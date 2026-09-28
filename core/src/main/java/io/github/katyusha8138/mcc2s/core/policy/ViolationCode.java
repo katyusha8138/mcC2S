@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 mcC2S contributors
+
 package io.github.katyusha8138.mcc2s.core.policy;
 
 /** 違反の種類。{@link #code()} はプレイヤーに見せる参照番号として使う。 */
