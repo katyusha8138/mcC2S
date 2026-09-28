@@ -163,7 +163,14 @@ public final class ServerFiles {
 
     /** 公式ビルド一覧。リリース鍵が未設定、またはファイルが無い場合は空(=サーバー自身と同一ビルドのみ許可)。 */
     public static OfficialBuilds loadOfficialBuilds(Path configDir, Log log) {
-        Optional<byte[]> key = ReleaseKey.publicKey();
+        Optional<byte[]> key;
+        try {
+            key = ReleaseKey.publicKey();
+        } catch (IllegalStateException e) {
+            // 壊れた鍵を埋め込んだビルド。署名を検証できないので、最も厳格な動作(自分と同一ビルドのみ)に倒す
+            log.error("[mcC2S] " + e.getMessage() + "; official builds cannot be verified", null);
+            return OfficialBuilds.empty();
+        }
         Path file = configDir.resolve(OFFICIAL_BUILDS);
         if (key.isEmpty()) {
             log.info("[mcC2S] no release key is embedded in this build; only clients running the exact same mcC2S build as this server are allowed");

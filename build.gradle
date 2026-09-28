@@ -5,3 +5,11 @@ allprojects {
         mavenCentral()
     }
 }
+
+// 再現可能なビルド: 同じソースからは同じバイト列の jar ができる(公式ビルドのハッシュを第三者が検証できる)
+allprojects {
+    tasks.withType(AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+}

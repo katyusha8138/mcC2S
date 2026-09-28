@@ -1,0 +1,70 @@
+name: Release
+
+# タグ(v0.2.0 など)を push すると、ビルド → 公式ビルド一覧への署名 → GitHub Release への添付までを行う。
+# 事前に docs/RELEASING.md の手順(署名鍵の生成、公開鍵のコミット、シークレット登録、タグ保護)を済ませておくこと。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require the committed release public key
+        run: |
+          test -s release/release-public-key.txt || { echo "::error::release/release-public-key.txt is missing (see docs/RELEASING.md)"; exit 1; }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ./gradlew build :neoforge:jar :cli:jar -Pmcc2s_version="$version" --console=plain
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Sign the official builds list
+        env:
+          MCC2S_RELEASE_KEY: ${{ secrets.MCC2S_RELEASE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          set +x   # 秘密鍵をログに出さない
+          test -n "$MCC2S_RELEASE_KEY" || { echo "::error::secret MCC2S_RELEASE_KEY is not set"; exit 1; }
+          umask 077
+          key="$(mktemp)"
+          trap 'shred -u "$key" 2>/dev/null || rm -f "$key"' EXIT
+          printf '%s\n' "$MCC2S_RELEASE_KEY" > "$key"
+
+          cli="$(ls cli/build/libs/mcc2s-cli-*.jar | head -1)"
+          mod="$(ls neoforge/build/libs/mcc2s-neoforge-*.jar | head -1)"
+
+          # 過去のリリースの一覧があれば、署名を検証した上で引き継ぐ(追記専用)
+          base_args=()
+          mkdir -p prev
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern official-builds.txt --dir prev 2>/dev/null; then
+            base_args=(--base prev/official-builds.txt)
+          fi
+
+          java -jar "$cli" sign-release --key "$key" --version "$VERSION" --loader neoforge-1.21.1 \
+            "${base_args[@]}" --out official-builds.txt "$mod"
+
+          # 署名が、コミットされている公開鍵で検証できることを確認してから公開する
+          java -jar "$cli" verify-release --pubkey release/release-public-key.txt official-builds.txt
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            neoforge/build/libs/mcc2s-neoforge-*.jar
+            cli/build/libs/mcc2s-cli-*.jar
+            official-builds.txt
+          generate_release_notes: true

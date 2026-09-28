@@ -27,3 +27,14 @@ tasks.named('test') {
         exceptionFormat 'full'
     }
 }
+
+// リリース公開鍵(公開情報)を jar に同梱する。ファイルが無ければ同梱せず、鍵なしの最も厳格な動作になる。
+def releaseKeyFile = rootProject.file('release/release-public-key.txt')
+tasks.named('processResources') {
+    inputs.files(releaseKeyFile.exists() ? files(releaseKeyFile) : files())
+    if (releaseKeyFile.exists()) {
+        from(releaseKeyFile) {
+            into 'io/github/katyusha8138/mcc2s/common'
+        }
+    }
+}
