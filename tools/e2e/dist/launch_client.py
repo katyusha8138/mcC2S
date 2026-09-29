@@ -231,7 +231,9 @@ def main() -> int:
     if args.quickplay and "--quickPlayMultiplayer" not in game:
         game += ["--quickPlayMultiplayer", args.quickplay]  # バージョン JSON にクイックプレイの引数が無いとき
 
-    cmd = [args.java, "-Xmx1536m"] + jvm + [v["mainClass"]] + game
+    # ログの文字コードを UTF-8 にする(既定が ASCII の環境では、日本語のメッセージが "?" になる)
+    encoding = ["-Dfile.encoding=UTF-8", "-Dsun.stdout.encoding=UTF-8", "-Dstdout.encoding=UTF-8"]
+    cmd = [args.java, "-Xmx1536m"] + encoding + jvm + [v["mainClass"]] + game
     if args.dry_run:
         print(" ".join(cmd))
         return 0

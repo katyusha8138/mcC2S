@@ -143,7 +143,11 @@ boot_server() {
   if [ "$DIST" = 1 ]; then
     # インストーラが作る起動引数(run.sh と同じ)で、本番と同じ形で起動する
     local args; args="$(ls "$RUN"/server/libraries/net/*/*/*/unix_args.txt | head -1)"
-    [ -f "$RUN/server/user_jvm_args.txt" ] && ! grep -q '^-Xmx' "$RUN/server/user_jvm_args.txt" && echo "-Xmx1G" >> "$RUN/server/user_jvm_args.txt"
+    # ログの文字コードを UTF-8 にする(既定が ASCII の環境では、日本語のメッセージが "?" になり、ログで判定できない)
+    local flag
+    for flag in -Xmx1G -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dstdout.encoding=UTF-8; do
+      grep -qxF -- "$flag" "$RUN/server/user_jvm_args.txt" 2>/dev/null || echo "$flag" >> "$RUN/server/user_jvm_args.txt"
+    done
     (cd "$RUN/server" && nohup "$JAVA_BIN" @user_jvm_args.txt "@${args#$RUN/server/}" nogui > "$SERVER_LOG" 2>&1 &)
   else
     (cd "$ROOT" && nohup ./gradlew :$LOADER:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
