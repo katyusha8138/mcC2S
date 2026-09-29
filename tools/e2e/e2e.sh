@@ -6,6 +6,9 @@
 #
 #   tools/e2e/e2e.sh [シナリオ...]                    (省略時は全シナリオ。既定は NeoForge 1.21.1)
 #   E2E_LOADER=forge tools/e2e/e2e.sh [シナリオ...]   Forge 1.20.1 を試験する(JDK 17 が必要)
+#   E2E_DIST=1 [E2E_LOADER=forge] tools/e2e/e2e.sh    開発実行ではなく、配布 jar(難読化済み)そのものを試験する。
+#       公式インストーラで入れた本番構成のサーバーとクライアントの mods/ に、build/libs の配布 jar を入れて動かす
+#       (tools/e2e/dist/setup.sh が用意する。開発実行では、SRG 名に再マッピングした jar も難読化した jar も動かせない)
 #
 # シナリオ:
 #   vanilla   mcC2S を持たないクライアント(生プロトコルのプローブ)     -> 拒否される
@@ -30,8 +33,19 @@ case "$LOADER" in
   forge)    PROTOCOL=763; PORT=25598 ;;   # Minecraft 1.20.1
   *) echo "E2E_LOADER must be neoforge or forge (got '$LOADER')" >&2; exit 2 ;;
 esac
-RUN="$ROOT/$LOADER/run"
-OUT="${E2E_OUT:-$ROOT/build/e2e/$LOADER}"
+DIST="${E2E_DIST:-0}"
+if [ "$DIST" = 1 ]; then
+  RUN="$ROOT/build/dist-run/$LOADER"
+  OUT="${E2E_OUT:-$ROOT/build/e2e/dist-$LOADER}"
+  case "$LOADER" in
+    forge)    JAVA_BIN="${JAVA17_HOME:-/opt/jdk17}/bin/java" ;;
+    neoforge) JAVA_BIN="${JAVA21_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}/bin/java" ;;
+  esac
+  [ -x "$JAVA_BIN" ] || JAVA_BIN="$(command -v java)"
+else
+  RUN="$ROOT/$LOADER/run"
+  OUT="${E2E_OUT:-$ROOT/build/e2e/$LOADER}"
+fi
 mkdir -p "$OUT"
 SERVER_LOG="$OUT/server.log"
 PASS=0
@@ -59,7 +73,28 @@ kill_game() {
   log "WARN: game processes did not exit"
 }
 
+# 配布 jar(難読化済み)をビルドし、サーバーとクライアントの mods/ に入れる。...-plain.jar は難読化前なので使わない。
+install_dist_jar() {
+  (cd "$ROOT" && ./gradlew ":$LOADER:distJar" --console=plain -q) || { log "distJar failed"; return 1; }
+  local jar; jar="$(ls "$ROOT/$LOADER/build/libs/"mcc2s-"$LOADER"-*.jar | grep -v -- '-plain\.jar$' | head -1)"
+  [ -n "$jar" ] || { log "no distribution jar found"; return 1; }
+  mkdir -p "$RUN/server/mods" "$RUN/client/mods"
+  rm -f "$RUN/server/mods/"mcc2s-*.jar "$RUN/client/mods/"mcc2s-*.jar
+  cp "$jar" "$RUN/server/mods/"
+  cp "$jar" "$RUN/client/mods/"
+  log "distribution jar: $(basename "$jar") ($(sha256sum "$jar" | cut -c1-16)...)"
+}
+
+# クライアントの mods/ から、mcC2S 自身以外の jar(前のシナリオが置いたもの)を消す
+clean_client_mods() {
+  find "$RUN/client/mods" -maxdepth 1 -name '*.jar' ! -name 'mcc2s-*' -delete 2>/dev/null || true
+}
+
 prepare() {
+  if [ "$DIST" = 1 ]; then
+    "$ROOT/tools/e2e/dist/setup.sh" "$LOADER" || { log "setup failed"; exit 2; }
+    install_dist_jar || exit 2
+  fi
   mkdir -p "$RUN/server" "$RUN/client/config/mcc2s/trust" "$RUN/client/mods"
   echo "eula=true" > "$RUN/server/eula.txt"
   cat > "$RUN/server/server.properties" <<EOF
@@ -86,7 +121,8 @@ skipMultiplayerWarning:true
 pauseOnLostFocus:false
 soundCategory_master:0.0
 EOF
-  rm -f "$RUN/client/mods/"*.jar "$RUN/client/config/mcc2s/trust/"*.mc2strust
+  clean_client_mods
+  rm -f "$RUN/client/config/mcc2s/trust/"*.mc2strust
   rm -rf "$RUN/server/logs/mcc2s"
   # 前回までの実行で保存されたプレイヤーデータを消す。死亡したまま切断すると体力 0 の状態が保存され、
   # 同じ名前で再参加しても死亡画面から始まってキー入力が効かなくなる。
@@ -104,7 +140,14 @@ apply_policy() {
 
 boot_server() {
   : > "$SERVER_LOG"
-  (cd "$ROOT" && nohup ./gradlew :$LOADER:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
+  if [ "$DIST" = 1 ]; then
+    # インストーラが作る起動引数(run.sh と同じ)で、本番と同じ形で起動する
+    local args; args="$(ls "$RUN"/server/libraries/net/*/*/*/unix_args.txt | head -1)"
+    [ -f "$RUN/server/user_jvm_args.txt" ] && ! grep -q '^-Xmx' "$RUN/server/user_jvm_args.txt" && echo "-Xmx1G" >> "$RUN/server/user_jvm_args.txt"
+    (cd "$RUN/server" && nohup "$JAVA_BIN" @user_jvm_args.txt "@${args#$RUN/server/}" nogui > "$SERVER_LOG" 2>&1 &)
+  else
+    (cd "$ROOT" && nohup ./gradlew :$LOADER:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
+  fi
   for _ in $(seq 1 180); do
     grep -q 'Done (' "$SERVER_LOG" && return 0
     grep -q 'Failed to start the minecraft server' "$SERVER_LOG" && { log "server failed to start"; tail -20 "$SERVER_LOG"; return 1; }
@@ -157,8 +200,15 @@ run_client() {
   # ログのファイルサイズを 40MB に制限する(FML の起動エラーで確認プロンプトが無限に出力されても、ディスクを埋めない)
   {
     ulimit -f 40960
-    cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
-      ./gradlew :$LOADER:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
+    cd "$ROOT"
+    if [ "$DIST" = 1 ]; then
+      LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
+        python3 "$ROOT/tools/e2e/dist/launch_client.py" --dir "$RUN/client" --name "$name" \
+          --quickplay "127.0.0.1:$PORT" --java "$JAVA_BIN"
+    else
+      LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
+        ./gradlew :$LOADER:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
+    fi
   } > "$CLIENT_LOG" 2>&1 < /dev/null &
   for _ in $(seq 1 60); do
     if grep -q "y/n:" "$CLIENT_LOG" 2>/dev/null; then log "  client crashed during startup (see $CLIENT_LOG)"; break; fi
@@ -368,8 +418,11 @@ main() {
     fi
     # 各シナリオは、前のシナリオがクライアントの mods/ に置いた jar を引き継がない(隔離)。
     # 信頼ファイルもここで外し、必要なシナリオが install_trust で入れ直す。
-    rm -f "$RUN/client/mods/"*.jar "$RUN/client/config/mcc2s/trust/"*.mc2strust
+    clean_client_mods
+    rm -f "$RUN/client/config/mcc2s/trust/"*.mc2strust
     "scenario_$s"
+    # サーバーのログは、プロファイルが変わるたびの再起動で上書きされる。原因調査のためにシナリオごとに残す。
+    cp -f "$SERVER_LOG" "$OUT/server-$s.log" 2>/dev/null || true
   done
   kill_game
   log "result: $PASS passed, $FAIL failed"
