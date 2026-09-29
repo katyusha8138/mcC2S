@@ -32,11 +32,16 @@ git push origin v0.2.0
 `.github/workflows/release.yml` が次を行います。
 
 1. `release/release-public-key.txt` があることを確認(無ければ失敗)
-2. ビルドとテスト(`./gradlew build :neoforge:jar :cli:jar`)
+2. ビルドとテスト(`./gradlew build :cli:jar`)。JDK は 17(forge / Minecraft 1.20.1)と 21(neoforge / 1.21.1)の両方が要る。
+   `build` は全モジュールのテストと、**配布 jar(難読化済み)** の生成を含む(下記「難読化」)
 3. **公式ビルド一覧への署名**: 前回リリースの `official-builds.txt` があれば、署名を検証した上で引き継ぎ
-   (追記専用)、今回の mod jar のハッシュを追加して署名
+   (追記専用)、今回の **NeoForge 用・Forge 用の配布 jar のハッシュ** を追加して署名(ローダーごとに 1 回ずつ)
 4. 署名が、コミット済みの公開鍵で検証できることを確認
-5. GitHub Release に、mod jar・CLI jar・`official-builds.txt` を添付
+5. GitHub Release に、`mcc2s-neoforge-1.21.1-<版>.jar`・`mcc2s-forge-1.20.1-<版>.jar`・CLI jar・
+   `official-builds.txt` を添付。難読化のマッピングは、公開のリリースではなくワークフローの成果物として保管する
+
+配布物は **難読化後の jar**(`build/libs/<名前>-<版>.jar`)だけです。`...-plain.jar` は難読化前の中間物なので配布しません
+(サーバーが照合する公式ビルドのハッシュは、配布する jar のものです)。
 
 ## 3. サーバー運営者に伝えること
 
@@ -51,9 +56,25 @@ git push origin v0.2.0
 からは同じバイト列の jar ができるため、第三者が公式ビルドのハッシュを検証できます。
 
 ```sh
-java -jar mcc2s-cli.jar hash neoforge/build/libs/mcc2s-neoforge-*.jar
+java -jar mcc2s-cli.jar hash neoforge/build/libs/mcc2s-neoforge-1.21.1-<版>.jar forge/build/libs/mcc2s-forge-1.20.1-<版>.jar
 java -jar mcc2s-cli.jar verify-release --pubkey release/release-public-key.txt official-builds.txt
 ```
+
+## 4.5 難読化
+
+配布 jar は、`obfuscator`(文字列定数)と ProGuard(クラス・メソッド・フィールドの名前)で難読化されます
+(`gradle/obfuscation.gradle`、設定は `gradle/proguard/`)。GPL の方針として、難読化するのは**配布する jar だけ**で、
+ソースとビルドスクリプトは公開のままです(`LICENSING.md`)。
+
+- 出力は入力だけで決まる(乱数・時刻を使わない)ので、難読化を含めてビルドは再現できる
+- 難読化の対象は `core` / `common`(プロトコル・走査・検証)。ローダーとの接点(アダプタ)は名前を保つ
+- 名前が残るのは、アダプタと例外クラス(診断メッセージに出るため)だけ
+- 文字列連結の定型文も対象にするため、`core` / `common` は `-XDstringConcat=inline` でコンパイルする
+- **限界**: 難読化は jar 単体を眺めて構造を読み取る手間を増やすだけ。ソースは公開で、再現可能ビルドなので
+  マッピングも誰でも再生成できる。暗号・検証の安全性はこれに依存しない(`THREAT_MODEL.md`)
+
+配布 jar は、開発実行ではなく**本番構成**で試験する(`E2E_DIST=1 tools/e2e/e2e.sh`、`tools/e2e/dist/`)。
+Forge 1.20.1 の jar は本番用の名前(SRG)に再マッピングされていて、開発実行では動かせないため。
 
 ## 5. 鍵の更新(漏洩・紛失時)
 

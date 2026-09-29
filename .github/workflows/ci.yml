@@ -12,8 +12,15 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          # forge(Minecraft 1.20.1)は Java 17、neoforge(1.21.1)は Java 21 のツールチェーンで動かす。
+          # 最後に書いたものが既定の JDK(Gradle 自体は 21 で動く)。jmods 付きの JDK が必要(難読化が JDK のクラスを参照する)。
+          java-version: |
+            17
+            21
       - uses: gradle/actions/setup-gradle@v4
-      # core / common / cli は Java 17 API に固定(--release 17)。neoforge は Java 21。
-      # neoforge の初回ビルドは Minecraft のデコンパイルで数分かかる。
-      - run: ./gradlew build :neoforge:jar :cli:jar --console=plain
+      # build は全モジュールのテストと、配布 jar(難読化済み)の生成(assemble → distJar)を含む。
+      # core / common / cli / obfuscator は Java 17 API に固定(--release 17)。
+      # neoforge / forge の初回ビルドは Minecraft のデコンパイルで数分かかる。
+      - run: >
+          ./gradlew build :cli:jar --console=plain
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64

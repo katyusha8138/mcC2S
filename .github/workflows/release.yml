@@ -22,13 +22,18 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          # forge(1.20.1)は Java 17、neoforge(1.21.1)は Java 21。最後に書いたものが既定の JDK。jmods 付きの JDK が必要。
+          java-version: |
+            17
+            21
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build and test
         run: |
           version="${GITHUB_REF_NAME#v}"
-          ./gradlew build :neoforge:jar :cli:jar -Pmcc2s_version="$version" --console=plain
+          # build は全モジュールのテストと、配布 jar(難読化済み)の生成を含む
+          ./gradlew build :cli:jar -Pmcc2s_version="$version" --console=plain \
+            -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Sign the official builds list
@@ -45,7 +50,10 @@ jobs:
           printf '%s\n' "$MCC2S_RELEASE_KEY" > "$key"
 
           cli="$(ls cli/build/libs/mcc2s-cli-*.jar | head -1)"
-          mod="$(ls neoforge/build/libs/mcc2s-neoforge-*.jar | head -1)"
+          # 配布するのは難読化済みの jar だけ(...-plain.jar は難読化前なので含めない)
+          neoforge_jar="neoforge/build/libs/mcc2s-neoforge-1.21.1-${VERSION}.jar"
+          forge_jar="forge/build/libs/mcc2s-forge-1.20.1-${VERSION}.jar"
+          test -f "$neoforge_jar" && test -f "$forge_jar" || { echo "::error::distribution jars not found"; ls neoforge/build/libs forge/build/libs; exit 1; }
 
           # 過去のリリースの一覧があれば、署名を検証した上で引き継ぐ(追記専用)
           base_args=()
@@ -54,17 +62,32 @@ jobs:
             base_args=(--base prev/official-builds.txt)
           fi
 
+          # ローダーごとに 1 回ずつ。2 回目は 1 回目の出力を引き継ぐ(署名を検証した上での追記)
           java -jar "$cli" sign-release --key "$key" --version "$VERSION" --loader neoforge-1.21.1 \
-            "${base_args[@]}" --out official-builds.txt "$mod"
+            "${base_args[@]}" --out official-builds.txt "$neoforge_jar"
+          java -jar "$cli" sign-release --key "$key" --version "$VERSION" --loader forge-1.20.1 \
+            --base official-builds.txt --out official-builds.txt "$forge_jar"
 
           # 署名が、コミットされている公開鍵で検証できることを確認してから公開する
           java -jar "$cli" verify-release --pubkey release/release-public-key.txt official-builds.txt
+
+      # 難読化のマッピング(スタックトレースを元の名前に戻すためのもの)は、公開のリリースには付けず、
+      # ワークフローの成果物として保管する。同じソースから再ビルドすれば誰でも再現できる(再現可能ビルド)ので、
+      # 隠す意味はないが、配布物と一緒に公開する必要もない。
+      - name: Keep the obfuscation mappings
+        uses: actions/upload-artifact@v4
+        with:
+          name: obfuscation-mappings-${{ github.ref_name }}
+          path: |
+            neoforge/build/obfuscation/mapping.txt
+            forge/build/obfuscation/mapping.txt
 
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            neoforge/build/libs/mcc2s-neoforge-*.jar
+            neoforge/build/libs/mcc2s-neoforge-1.21.1-${{ env.VERSION }}.jar
+            forge/build/libs/mcc2s-forge-1.20.1-${{ env.VERSION }}.jar
             cli/build/libs/mcc2s-cli-*.jar
             official-builds.txt
           generate_release_notes: true
