@@ -100,8 +100,9 @@ class StringObfuscatorTest {
         TransformingLoader loader = new TransformingLoader(new StringObfuscator(List.of()));
         run(loader);
 
-        // ldc だけで使われている文字列(定数フィールド・invokedynamic の定型文・アノテーションは対象外)
+        // ldc だけで使われている文字列と、定数フィールド(invokedynamic の定型文・アノテーションは対象外)
         String[] hidden = {
+            "SUBJECT-CONSTANT-FIELD", "SUBJECT-INTERFACE-CONSTANT",
             "SUBJECT-PLAIN-LITERAL", "SUBJECT-STATIC-INIT-", "SUBJECT-SWITCH-ONE", "SUBJECT-SWITCH-TWO",
             "SUBJECT-LAMBDA-BODY", "SUBJECT-GREETER-NAME", "SUBJECT-DEFAULT-METHOD-", "SUBJECT-ENUM-ALPHA",
             "SUBJECT-ENUM-BETA", "SUBJECT-RECORD-SEP", "SUBJECT-PAIR-LEFT", "SUBJECT-ANONYMOUS",
@@ -117,6 +118,25 @@ class StringObfuscatorTest {
             assertTrue(originalHas, "the literal should be in the original classes: " + s);
             assertFalse(transformedHas, "the literal must not remain in plain text: " + s);
         }
+    }
+
+    @Test
+    void constantFieldsKeepTheirValuesViaReflection() throws Exception {
+        TransformingLoader loader = new TransformingLoader(new StringObfuscator(List.of()));
+        Class<?> subject = Class.forName(SUBJECT, true, loader);
+        java.lang.reflect.Field constant = subject.getDeclaredField("CONSTANT");
+        constant.setAccessible(true);
+        assertEquals(SampleSubject.CONSTANT, constant.get(null));
+        assertEquals(SampleSubject.STATIC_INIT, readStatic(subject, "STATIC_INIT"));
+
+        Class<?> greeter = Class.forName(SUBJECT + "$Greeter", true, loader);
+        assertEquals(SampleSubject.Greeter.TAG, readStatic(greeter, "TAG"));
+    }
+
+    private static Object readStatic(Class<?> c, String field) throws Exception {
+        java.lang.reflect.Field f = c.getDeclaredField(field);
+        f.setAccessible(true);
+        return f.get(null);
     }
 
     @Test

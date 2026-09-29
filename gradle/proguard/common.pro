@@ -19,8 +19,11 @@
 -keepattributes Signature,InnerClasses,EnclosingMethod,Exceptions,*Annotation*,AnnotationDefault,Record,PermittedSubclasses,NestHost,NestMembers,LineNumberTable
 -renamesourcefileattribute mcC2S
 
-# 名前を付け替えたクラスは 1 つのパッケージにまとめる(このパッケージは mcC2S 専用)
+# 名前を付け替えたクラスは 1 つのパッケージにまとめる(このパッケージは mcC2S 専用)。
+# 名前を保つクラス(例外)がパッケージ非公開のメンバーを触っていると、そのパッケージのクラスを移せないので、
+# アクセス権の拡張を許す(jar の内側だけ。アダプタが使う公開 API は変わらない)。
 -repackageclasses io.github.katyusha8138.mcc2s.internal
+-allowaccessmodification
 
 # 例外クラスの名前は診断メッセージ(クライアントが「失敗: <例外名>」と表示する)に出るので保つ
 -keepnames class * extends java.lang.Throwable

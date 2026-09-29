@@ -73,3 +73,7 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 17
 }
+
+// 配布 jar の難読化(文字列 → 名前)。開発実行(runClient / runServer)は難読化しない。
+ext.obfuscation = [loader: 'forge', plainJarTask: 'reobfJar']
+apply from: rootProject.file('gradle/obfuscation.gradle')

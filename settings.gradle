@@ -9,9 +9,11 @@ rootProject.name = 'mcc2s'
 
 // core     : ローダー非依存のコア(暗号・プロトコル・ポリシー)
 // neoforge : NeoForge 1.21.1 アダプタ
-// forge    : Forge 1.20.1 アダプタ(M4)
+// forge    : Forge 1.20.1 アダプタ
+// obfuscator: 配布 jar の文字列を難読化するビルド用ツール(mod には同梱しない)
 include 'core'
 include 'common'
 include 'cli'
 include 'neoforge'
 include 'forge'
+include 'obfuscator'

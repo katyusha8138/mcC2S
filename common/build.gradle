@@ -8,6 +8,9 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 17
     options.encoding = 'UTF-8'
     options.compilerArgs += ['-Xlint:all', '-Werror']
+    // 文字列連結を invokedynamic ではなく StringBuilder に展開する。定型文がブートストラップ引数に入ると、
+    // 配布 jar の文字列難読化(ldc の置き換え)の対象から漏れるため。挙動は同じ。
+    options.compilerArgs += ['-XDstringConcat=inline']
 }
 
 dependencies {

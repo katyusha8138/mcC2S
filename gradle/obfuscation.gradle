@@ -1,10 +1,14 @@
 // 配布 jar の難読化(文字列 → 名前)。アダプタ(neoforge / forge)の build.gradle から適用する。
 //
-//   ext.obfuscation = [loader: 'forge']        // gradle/proguard/<loader>.pro を使う
+//   ext.obfuscation = [loader: 'forge', plainJarTask: 'reobfJar']
+//       loader       : gradle/proguard/<loader>.pro を使う
+//       plainJarTask : 難読化前の配布 jar を作るタスク(省略時は jar)。Forge 1.20.1 は、jar(開発用の名前)を
+//                      本番の名前(SRG)へ再マッピングする reobfJar の出力が、難読化の入力になる
 //   apply from: rootProject.file('gradle/obfuscation.gradle')
 //
 // タスクの流れ:
-//   jar(難読化前、...-plain.jar) → obfuscateStrings(文字列定数) → obfuscateNames(ProGuard で名前) → distJar(配布物)
+//   <plainJarTask>(難読化前、...-plain.jar) → obfuscateStrings(文字列定数) → obfuscateNames(ProGuard で名前) → distJar(配布物)
+//   配布物は build/libs/<名前>-<バージョン>.jar。...-plain.jar は難読化前なので配布しない
 //
 // 方針(docs/LICENSING.md, docs/RELEASING.md):
 //   - 難読化するのは配布する jar だけ。ソースとこのビルドスクリプトは公開のまま(GPL)
@@ -26,7 +30,7 @@ dependencies {
     proguard 'com.guardsquare:proguard-base:7.7.0'
 }
 
-def plainJar = tasks.named('jar')
+def plainJar = tasks.named(project.ext.obfuscation.plainJarTask ?: 'jar')
 plainJar.configure {
     archiveClassifier = 'plain'
 }
@@ -45,7 +49,7 @@ def obfuscateStrings = tasks.register('obfuscateStrings', JavaExec) {
     dependsOn plainJar
     inputs.file plainJar.flatMap { it.archiveFile }
     outputs.file stringsJar
-    classpath = files(obfProject.tasks.named('jar'), obfProject.configurations.named('runtimeClasspath'))
+    classpath = files(obfProject.tasks.named('jar'), obfProject.configurations.runtimeClasspath)
     mainClass = 'io.github.katyusha8138.mcc2s.obfuscator.Main'
     doFirst {
         stringsJar.get().asFile.parentFile.mkdirs()
@@ -63,7 +67,7 @@ def obfuscateNames = tasks.register('obfuscateNames', JavaExec) {
     inputs.dir rootProject.file('gradle/proguard')
     inputs.property('loader', loaderName)
     outputs.files namesJar, mappingFile
-    classpath = configurations.named('proguard')
+    classpath = configurations.proguard
     mainClass = 'proguard.ProGuard'
     maxHeapSize = '1g'
     doFirst {
@@ -103,7 +107,8 @@ def distJar = tasks.register('distJar', Jar) {
         exclude 'META-INF/MANIFEST.MF'
     }
     manifest {
-        from(plainJar.get().manifest)
+        // マニフェストは jar タスクの定義(Implementation-* など)を使い直す。ProGuard の出力のものは使わない。
+        from(tasks.named('jar').get().manifest)
     }
 }
 

@@ -17,6 +17,9 @@ public final class SampleSubject implements Supplier<String> {
     }
 
     interface Greeter {
+        /** インターフェースの定数(暗黙に public static final)。 */
+        String TAG = "SUBJECT-INTERFACE-CONSTANT";
+
         String name();
 
         default String greet() {
@@ -76,7 +79,7 @@ public final class SampleSubject implements Supplier<String> {
         Supplier<String> lambda = () -> "SUBJECT-LAMBDA-BODY";
         sb.append(lambda.get()).append('|');
         Greeter g = () -> "SUBJECT-GREETER-NAME";
-        sb.append(g.greet()).append('|');
+        sb.append(g.greet()).append(Greeter.TAG).append('|');
         for (Kind k : Kind.values()) {
             sb.append(k.label).append(':').append(k.name()).append(',');
         }

@@ -22,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -134,7 +135,10 @@ public final class ServerHooks {
         }
 
         GameProfile profile = event.getProfile();
-        var player = new ServerVerification.Player(profile.getName(), profile.getId(), describe(connection.getRemoteAddress()));
+        // オフラインモードでは、ログイン交渉の時点ではまだ UUID が無い(参加処理で割り当てられる)。
+        // ログ・違反記録用に、バニラがオフラインで割り当てるのと同じ規則の UUID を使う(接続の束縛はログイン名なので影響しない)。
+        UUID id = profile.getId() != null ? profile.getId() : UUIDUtil.createOfflinePlayerUUID(profile.getName());
+        var player = new ServerVerification.Player(profile.getName(), id, describe(connection.getRemoteAddress()));
         var verification = new ServerVerification(rt.context(), player, new ServerVerification.Transport() {
             @Override
             public void send(byte[] chunk) {

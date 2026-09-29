@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarEntry;
@@ -21,6 +22,7 @@ import java.util.zip.ZipEntry;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
@@ -33,10 +35,13 @@ import org.objectweb.asm.tree.MethodNode;
  * ようにする手間の増加であり、秘匿ではない(復号処理は各クラスに入っていて、鍵も呼び出し側にある)。
  * 出力は入力と対象だけで決まる(乱数・時刻を使わない)ので、ビルドは再現できる。
  *
+ * <p>{@code static final String} の定数フィールド(ConstantValue 属性)は、属性を外してクラスの静的初期化子
+ * ({@code <clinit>})の先頭で代入する形に変える(初期化の順序は変わらない)。
+ *
  * <p>対象外(平文のまま残る):
  * <ul>
- *   <li>{@code static final String} の定数フィールド(ConstantValue 属性)。使用側の {@code ldc} は置き換わる</li>
- *   <li>文字列連結({@code invokedynamic})の定型文。バイトコード上は {@code ldc} ではなくブートストラップ引数のため</li>
+ *   <li>文字列連結({@code invokedynamic})の定型文。バイトコード上は {@code ldc} ではなくブートストラップ引数のため。
+ *       core / common は {@code -XDstringConcat=inline} でコンパイルして、この形を作らないようにしている</li>
  *   <li>アノテーションの値</li>
  *   <li>空文字列と、UTF-8 で往復できない文字列(対になっていないサロゲート)、極端に長い文字列</li>
  * </ul>
@@ -180,12 +185,17 @@ public final class StringObfuscator {
         return bytes.length <= MAX_PLAIN_UTF8_BYTES && new String(bytes, StandardCharsets.UTF_8).equals(s);
     }
 
+    /** 定数フィールドの初期化({@code <clinit>} の先頭に入れる)。 */
+    private record FieldInit(String name, String descriptor, String cipher, long key) {}
+
     private final class Encryptor extends ClassVisitor {
         private String owner;
         private boolean isInterface;
         private int version;
         private long seed;
         private int counter;
+        private boolean sawClinit;
+        private final List<FieldInit> fieldInits = new ArrayList<>();
         int replaced;
 
         Encryptor(ClassVisitor next) {
@@ -201,20 +211,47 @@ public final class StringObfuscator {
             super.visit(version, access, name, signature, superName, interfaces);
         }
 
+        private long nextKey() {
+            long key = splitmix64(seed + (++counter) * GOLDEN);
+            return key == 0 ? GOLDEN : key; // xorshift は 0 を鍵にできない
+        }
+
+        @Override
+        public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+            if (version >= Opcodes.V9
+                    && (access & Opcodes.ACC_STATIC) != 0
+                    && descriptor.equals("Ljava/lang/String;")
+                    && value instanceof String s
+                    && encryptable(s)) {
+                long key = nextKey();
+                fieldInits.add(new FieldInit(name, descriptor, encrypt(s, key), key));
+                replaced++;
+                return super.visitField(access, name, descriptor, signature, null); // 定数値を外す(<clinit> で代入する)
+            }
+            return super.visitField(access, name, descriptor, signature, value);
+        }
+
         @Override
         public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
             if (mv == null || version < Opcodes.V9) {
                 return mv; // private な static メソッドをインターフェースに置けるのは Java 9 以降
             }
+            boolean clinit = name.equals("<clinit>");
+            sawClinit |= clinit;
             return new MethodVisitor(Opcodes.ASM9, mv) {
+                @Override
+                public void visitCode() {
+                    super.visitCode();
+                    if (clinit) {
+                        emitFieldInits(mv); // 定数フィールドは、他の静的初期化より先に値が入っていた。その順序を保つ
+                    }
+                }
+
                 @Override
                 public void visitLdcInsn(Object value) {
                     if (value instanceof String s && encryptable(s)) {
-                        long key = splitmix64(seed + (++counter) * GOLDEN);
-                        if (key == 0) {
-                            key = GOLDEN; // xorshift は 0 を鍵にできない
-                        }
+                        long key = nextKey();
                         super.visitLdcInsn(encrypt(s, key));
                         super.visitLdcInsn(key);
                         super.visitMethodInsn(Opcodes.INVOKESTATIC, owner, DECODE_NAME, DECODE_DESC, isInterface);
@@ -226,8 +263,25 @@ public final class StringObfuscator {
             };
         }
 
+        private void emitFieldInits(MethodVisitor out) {
+            for (FieldInit f : fieldInits) {
+                out.visitLdcInsn(f.cipher());
+                out.visitLdcInsn(f.key());
+                out.visitMethodInsn(Opcodes.INVOKESTATIC, owner, DECODE_NAME, DECODE_DESC, isInterface);
+                out.visitFieldInsn(Opcodes.PUTSTATIC, owner, f.name(), f.descriptor());
+            }
+        }
+
         @Override
         public void visitEnd() {
+            if (!fieldInits.isEmpty() && !sawClinit) {
+                MethodVisitor mv = super.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+                mv.visitCode();
+                emitFieldInits(mv);
+                mv.visitInsn(Opcodes.RETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+            }
             if (replaced > 0) {
                 copyDecoder();
             }

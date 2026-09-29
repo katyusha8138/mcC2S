@@ -109,6 +109,8 @@ public final class ClientHooks {
 
                     @Override
                     public void abort(String message) {
+                        // Forge 1.20.1 のクライアントは切断理由をログに残さないので、mcC2S の側で残す(不具合報告と試験のため)
+                        FmlInfo.LOG.warn("[mcC2S] disconnecting: " + message);
                         Minecraft.getInstance().execute(() -> connection.disconnect(Component.literal(message)));
                     }
                 },

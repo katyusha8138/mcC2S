@@ -17,6 +17,7 @@ import io.github.katyusha8138.mcc2s.core.policy.ViolationReport;
 import io.github.katyusha8138.mcc2s.core.wire.WireException;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
@@ -40,7 +41,19 @@ public final class ServerVerification {
         void allow();
     }
 
-    public record Player(String name, UUID id, String address) {}
+    /**
+     * 検証対象のプレイヤー。3 つとも必須(違反記録・ログにそのまま出る)。
+     * ログイン交渉の時点でまだ UUID が無いローダー(Forge 1.20.1 のオフラインモード)では、アダプタが
+     * 導出して渡すこと。null を後段(違反記録の作成)まで持ち込むと、判定は安全側に倒れても、原因の分かりにくい
+     * 「予期しないエラー」になる。
+     */
+    public record Player(String name, UUID id, String address) {
+        public Player {
+            Objects.requireNonNull(name, "player name");
+            Objects.requireNonNull(id, "player id");
+            Objects.requireNonNull(address, "player address");
+        }
+    }
 
     private enum State {
         AWAIT_ATTESTATION,

@@ -162,7 +162,7 @@ run_client() {
   } > "$CLIENT_LOG" 2>&1 < /dev/null &
   for _ in $(seq 1 60); do
     if grep -q "y/n:" "$CLIENT_LOG" 2>/dev/null; then log "  client crashed during startup (see $CLIENT_LOG)"; break; fi
-    if grep -qE "\[mcC2S\] $name verified|\[mcC2S\] (DENIED|AUDIT_ALLOWED) $name|$name joined the game|Client disconnected with reason" "$SERVER_LOG" "$CLIENT_LOG" 2>/dev/null; then
+    if grep -qE "\[mcC2S\] $name verified|\[mcC2S\] (DENIED|AUDIT_ALLOWED) $name|$name joined the game|Client disconnected with reason|\[mcC2S\] disconnecting" "$SERVER_LOG" "$CLIENT_LOG" 2>/dev/null; then
       sleep 4
       break
     fi
@@ -214,6 +214,25 @@ ensure_xlib() {
   python3 -c 'import Xlib' 2>/dev/null
 }
 
+# サーバーが送った切断理由をクライアントが受け取ったことの確認。
+#   NeoForge 1.21.1 のクライアントは "Client disconnected with reason: <理由>" をログに出す。
+#   Forge 1.20.1 のクライアントは理由をログに出さないので、サーバー側の切断ログ("... lost connection: <理由>")で確認する。
+expect_kick() { # expect_kick <説明> <プレイヤー名> <クライアントログ> <理由の一部>
+  if [ "$LOADER" = forge ]; then
+    expect "$1" "$SERVER_LOG" "(name=$2,|$2 lost connection).*$4"
+  else
+    expect "$1" "$3" "Client disconnected with reason: $4"
+  fi
+}
+
+# 仮想ディスプレイの画面を保存する(目視確認用。失敗しても試験には影響しない)
+snap() { # snap <名前>
+  ensure_xlib || return 0
+  local disp; disp=$(xvfb_display)
+  [ -n "$disp" ] || return 0
+  XAUTHORITY="$(xvfb_auth)" python3 "$ROOT/tools/e2e/screenshot.py" "$disp" "$OUT/$1.png" >/dev/null 2>&1 || true
+}
+
 # 指定秒数まで待って判定する(定期再検証のように時間のかかる事象用)
 expect_within() { # expect_within <秒> <説明> <ファイル> <正規表現>
   local secs="$1"
@@ -247,7 +266,8 @@ scenario_notrust() {
   log "== notrust: client without the trust file"
   rm -f "$RUN/client/config/mcc2s/trust/"*.mc2strust
   run_client NoTrustNed; local clog="$CLIENT_LOG"
-  expect "client aborted with a helpful message" "$clog" "Client disconnected with reason: .*信頼ファイル"
+  snap notrust
+  expect "client aborted with a helpful message" "$clog" "(Client disconnected with reason: |\\[mcC2S\\] disconnecting: ).*信頼ファイル"
   expect_not "never joined" "$SERVER_LOG" "NoTrustNed joined the game"
   stop_client
 }
@@ -259,7 +279,8 @@ scenario_extrajar() {
   run_client SneakySam; local clog="$CLIENT_LOG"
   expect "server denied the client" "$SERVER_LOG" "\[mcC2S\] DENIED SneakySam"
   expect "the hidden jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[hidden-cheat-loader.jar\]"
-  expect "client was disconnected with the denial message" "$clog" "Client disconnected with reason: \[mcC2S\] 許可されていない"
+  snap extrajar
+  expect_kick "client was disconnected with the denial message" SneakySam "$clog" "\[mcC2S\] 許可されていない"
   expect_not "never joined" "$SERVER_LOG" "SneakySam joined the game"
   expect "JSON Lines record written" "$RUN/server/logs/mcc2s/violations.jsonl" "hidden-cheat-loader.jar"
   stop_client
@@ -286,7 +307,8 @@ scenario_reverify() {
   make_plain_jar "$RUN/client/mods/late-cheat-loader.jar"
   expect_within 90 "the late-installed jar was detected by the next re-verification" "$SERVER_LOG" "\[mcC2S\] DENIED ReverifyRae"
   expect "the jar was named in the server log" "$SERVER_LOG" "NOT_ALLOWED LIBRARY \[late-cheat-loader.jar\]"
-  expect "the player was kicked out of the running game" "$clog" "Client disconnected with reason: \[mcC2S\] 許可されていない"
+  snap reverify
+  expect_kick "the player was kicked out of the running game" ReverifyRae "$clog" "\[mcC2S\] 許可されていない"
   stop_client
 }
 
