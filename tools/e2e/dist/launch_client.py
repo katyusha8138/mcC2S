@@ -121,7 +121,10 @@ def resolve_version(base: Path, version_id: str) -> dict:
         "jvm": pa.get("jvm", []) + ca.get("jvm", []),
         "game": pa.get("game", []) + ca.get("game", []),
     }
-    merged["_jar_id"] = parent.get("_jar_id", parent_id)  # クラスパスに入れるのはバニラのクライアント jar
+    # クラスパスに入れる「クライアント jar」は、起動するバージョン自身のもの(JSON に "jar" があればそれ)。
+    # Forge / NeoForge は、インストーラが作った再マッピング済みのクライアントを libraries から読み込むので、
+    # バニラの jar を入れてはいけない(モジュールが衝突する)。自身の jar は無いので、実際には何も入らない。
+    merged["_jar_id"] = child.get("jar", version_id)
     return merged
 
 
