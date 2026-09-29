@@ -7,9 +7,9 @@ Minecraft サーバー運営者向けの**チート・不正対策 Mod**(Forge /
 サーバーコンソールに報告します。シングルプレイや mcC2S 未導入のサーバーでは何もしません。
 mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの無い)クライアントも参加できません。
 
-> **状態: 開発中(M1 `core` + M2 NeoForge 1.21.1 アダプタ + M3 運用機能を実装済み)**。NeoForge 1.21.1 の専用サーバー+クライアントで
-> 実機の動作確認済み(参加時の検証、プレイ中の定期再検証、リソース再読込時の即時再検証、`/mcc2s` コマンド、CLI、署名付きリリース CI)。
-> リリース前に残っているのは、難読化のビルド統合と Forge 1.20.1 対応(M4)です。
+> **状態: 開発中(計画のマイルストーン M1〜M4 を実装済み。リリース前)**。NeoForge 1.21.1 と Forge 1.20.1 の専用サーバー+
+> クライアントで実機の動作確認済み(参加時の検証、プレイ中の定期再検証、リソース再読込時の即時再検証、`/mcc2s` コマンド、
+> CLI、難読化した配布 jar、署名付きリリースの CI)。リリースには、署名鍵の生成と登録([docs/RELEASING.md](docs/RELEASING.md))が要ります。
 > 計画は [docs/PLAN.md](docs/PLAN.md)、運用は [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
 ## 何を守れて、何を守れないか
@@ -28,8 +28,9 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 | `common/` | ファイル走査・検証の状態機械・設定ファイル生成・違反ログ(Minecraft 非依存、Java 17 API) | 実装済み・テスト済み |
 | `neoforge/` | NeoForge 1.21.1 アダプタ(設定フェーズで検証) | 実装済み・実機 E2E 済み |
 | `cli/` | `mcc2s-cli`(ハッシュ算出・鍵生成・信頼ファイル生成・リリース署名/検証) | 実装済み・テスト済み |
-| `forge/` | Forge 1.20.1 アダプタ | 未着手(M4) |
-| `tools/e2e/` | 実機エンドツーエンド試験(専用サーバー+実クライアント) | — |
+| `forge/` | Forge 1.20.1 アダプタ(ログイン交渉で検証) | 実装済み・実機 E2E 済み |
+| `obfuscator/` | 配布 jar の文字列を難読化するビルド用ツール(mod には同梱しない) | 実装済み・テスト済み |
+| `tools/e2e/` | 実機エンドツーエンド試験(専用サーバー+実クライアント。開発実行と、配布 jar の本番構成) | — |
 
 ## ライセンス
 
@@ -37,12 +38,16 @@ mcC2S 導入サーバーには、mcC2S 未導入(または信頼ファイルの�
 
 ## ビルドとテスト
 
-JDK 21 が必要です(`core` / `common` は Java 17 API に固定)。
+JDK 21(NeoForge 1.21.1。Gradle 自体もこれで動く)と JDK 17(Forge 1.20.1)が必要です。どちらも `jmods` 付きの JDK
+(難読化が JDK のクラスを参照します)。`core` / `common` は Java 17 API に固定しています。
 
 ```sh
-./gradlew build                 # 全モジュールのビルドとユニットテスト
-./gradlew :neoforge:jar         # 配布用 jar(core / common を同梱)
-tools/e2e/e2e.sh                # 実機 E2E(専用サーバー+実クライアント。Xvfb / Mesa が必要)
+./gradlew build                          # 全モジュールのビルドとユニットテスト + 配布 jar(難読化済み)の生成
+                                         #   neoforge/build/libs/mcc2s-neoforge-1.21.1-<版>.jar
+                                         #   forge/build/libs/mcc2s-forge-1.20.1-<版>.jar   (...-plain.jar は難読化前)
+tools/e2e/e2e.sh                         # 実機 E2E(NeoForge。専用サーバー+実クライアント。Xvfb / Mesa が必要)
+E2E_LOADER=forge tools/e2e/e2e.sh        # 実機 E2E(Forge 1.20.1)
+E2E_DIST=1 [E2E_LOADER=forge] tools/e2e/e2e.sh   # 配布 jar そのものを、公式インストーラで入れた本番構成で試験
 ```
 
 ## サーバー運営者向けの流れ

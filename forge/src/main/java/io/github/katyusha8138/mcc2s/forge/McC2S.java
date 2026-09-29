@@ -28,6 +28,9 @@ import net.minecraftforge.fml.loading.FMLEnvironment;
 public final class McC2S {
     public static final String MOD_ID = "mcc2s";
 
+    // FMLJavaModLoadingContext.get() は 47.4.x で削除予定の扱いになったが、代替のコンストラクタ注入は
+    // 古い 47.x では使えない。mods.toml は [47,) を許容しているので、全 47.x で動く方を使う。
+    @SuppressWarnings("removal")
     public McC2S() {
         Network.register();
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();

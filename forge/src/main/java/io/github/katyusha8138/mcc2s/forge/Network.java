@@ -30,6 +30,8 @@ import org.apache.commons.lang3.tuple.Pair;
  * mcC2S 導入サーバーへの未導入クライアントは Forge ではなく mcC2S 自身が、日英併記の案内付きで拒否する。
  */
 public final class Network {
+    // ResourceLocation(String, String) は 47.4.x で削除予定の扱いだが、fromNamespaceAndPath は古い 47.x には無い。
+    @SuppressWarnings("removal")
     public static final ResourceLocation CHANNEL_ID = new ResourceLocation(McC2S.MOD_ID, "verify");
 
     private static final String PROTOCOL = "1";

@@ -16,8 +16,9 @@
 core/      ローダー非依存(Java 17 API)。暗号・プロトコル・マニフェスト・ポリシー・設定・署名   ← M1 完了
 common/    Minecraft 非依存の共通ロジック。走査・検証の状態機械・設定ファイル生成・違反ログ   ← M2 完了
 neoforge/  NeoForge 1.21.1 アダプタ(設定フェーズの検証タスクに配線するだけの薄い層)          ← M2 完了
-forge/     Forge 1.20.1 アダプタ                                                               ← M4
+forge/     Forge 1.20.1 アダプタ(ログイン交渉の中で検証する。Java 17)                         ← M4 完了
 cli/       鍵生成・信頼ファイル生成・ハッシュ生成・リリース署名                                 ← M3 完了
+obfuscator/ 配布 jar の文字列を難読化するビルド用ツール(mod には同梱しない)                     ← M4 完了
 ```
 
 `core` は Minecraft に依存しないので単体でテストできる。アダプタは「Minecraft から情報を集める」
@@ -46,16 +47,37 @@ cli/       鍵生成・信頼ファイル生成・ハッシュ生成・リリー
   - **メッセージ**: バニラクライアントも切断理由を読む必要があるため、リソースバンドル方式ではなく
     日本語/英語の併記リテラル(`Messages`)として実装。
   - 実機 E2E は `reverify`(定期再検証)と `onchange`(F3+T によるリソース再読込 → 即時再検証)を追加。
-- **M4 難読化 + Forge 1.20.1 アダプタ**: 難読化(名前・文字列)のビルド統合、Forge 用アダプタ
+- **M4 難読化 + Forge 1.20.1 アダプタ(完了)**:
+  - **Forge 1.20.1 アダプタ**: Forge 1.20.1 には NeoForge のような設定フェーズが無いので、ログイン交渉
+    (`PlayerNegotiationEvent` に Future を登録。完了までワールドに入れない)の中で検証する。ログイン名に結び付いた
+    チャレンジは FML の固定のログイン照会リストに載せられないので、`fml:loginwrapper` の包み方で自前の照会を送る。
+    バニラのログインは 30 秒で切られるため、参加時の検証の時間上限は 20 秒に切り詰める。詳細は `docs/PROTOCOL.md`。
+    再検証・リソース再読込での即時再検証・`/mcc2s` は NeoForge 版と同じ挙動(`common` を共有)。
+  - **難読化**: 配布 jar だけを対象に、文字列定数(定数フィールド・文字列連結を含む)と、`core` / `common` の名前を難読化する
+    (`obfuscator/` + ProGuard、`gradle/obfuscation.gradle`)。アダプタはローダーの型と接するので名前を保つ。
+    出力は決定的で、別パスのクリーンチェックアウトでも同じハッシュになる(再現可能ビルドを確認済み)。
+    難読化は解析の手間を増やすだけで、安全性はこれに依存しない(`docs/THREAT_MODEL.md`)。
+  - **試験**: 実機 E2E を Forge でも実施(`E2E_LOADER=forge`)。加えて、**配布 jar そのもの**を公式インストーラで入れた
+    本番構成のサーバー・クライアントで動かす試験(`E2E_DIST=1`)を追加した。Forge 1.20.1 の jar は本番用の名前(SRG)に
+    再マッピングされ、難読化もされているため、開発実行では動かせない。SELF の測定証明も、jar ファイル同士なので実際に検証される。
+    NeoForge・Forge × (開発実行・配布 jar) の 4 通りで、7 シナリオ・23 項目がすべて通る。
+  - **試験で見つかって直したもの**: Forge 1.20.1 では `pack.mcmeta` が無いと警告画面でクライアントが止まる /
+    Forge のオフラインモードではログイン交渉の時点で UUID が null(違反記録の作成で NPE。判定は安全側に倒れていたが、
+    audit でも切断されていた)。後者は境界(`ServerVerification.Player`)で null を拒否するようにした。
+  - CI と署名付きリリースを両ローダー・難読化済み jar に対応(ワークフローは GitHub Actions 上ではまだ動かしていない)。
 
 ## 環境メモ
 
 M2 以降のビルドには、Forge/NeoForge/Mojang の Maven・配布ホストへの到達が必要:
 `maven.neoforged.net` / `maven.minecraftforge.net` / `piston-meta.mojang.com` / `piston-data.mojang.com` /
-`libraries.minecraft.net`(許可済み)。
+`libraries.minecraft.net`(許可済み)。Forge 1.20.1 のビルドには JDK 17、NeoForge 1.21.1 には JDK 21 が要る
+(難読化のため jmods 付きの JDK)。本番構成の試験(`E2E_DIST=1`)は、インストーラと Mojang のライブラリの取得にも
+ネットワークを使う。
 
 ## 未決事項
 
 - ライセンスは GPL-3.0-or-later で進行中(`docs/LICENSING.md`)。`or-later` か `only` かの最終確認
 - リリース署名鍵の生成と保管(CI のシークレット)
 - Velocity/BungeeCord 等のプロキシ経由サーバーへの対応(直結を想定。拡張余地は `docs/PROXY.md`)
+- 本番構成の試験(`E2E_DIST=1`)は手元・専用環境向け。CI(GitHub Actions)では、ビルドと単体テストまでを実行する
+  (実機 E2E は Xvfb・ソフトウェア描画・大量のダウンロードが要るため、CI には載せていない)
