@@ -1,0 +1,112 @@
+// 配布 jar の難読化(文字列 → 名前)。アダプタ(neoforge / forge)の build.gradle から適用する。
+//
+//   ext.obfuscation = [loader: 'forge']        // gradle/proguard/<loader>.pro を使う
+//   apply from: rootProject.file('gradle/obfuscation.gradle')
+//
+// タスクの流れ:
+//   jar(難読化前、...-plain.jar) → obfuscateStrings(文字列定数) → obfuscateNames(ProGuard で名前) → distJar(配布物)
+//
+// 方針(docs/LICENSING.md, docs/RELEASING.md):
+//   - 難読化するのは配布する jar だけ。ソースとこのビルドスクリプトは公開のまま(GPL)
+//   - 出力は入力だけで決まる(乱数・時刻なし)ので、同じソースからは同じ jar ができる(再現可能ビルド)
+//   - 開発実行(runClient / runServer)は難読化しない
+//   - 難読化は「jar 単体を眺めて構造を読み取る手間」を増やすだけで、暗号や検証の安全性はこれに依存しない(docs/THREAT_MODEL.md)
+
+def loaderName = project.ext.obfuscation.loader
+evaluationDependsOn(':obfuscator')
+def obfProject = project(':obfuscator')
+
+configurations {
+    proguard {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+dependencies {
+    proguard 'com.guardsquare:proguard-base:7.7.0'
+}
+
+def plainJar = tasks.named('jar')
+plainJar.configure {
+    archiveClassifier = 'plain'
+}
+
+def workDir = layout.buildDirectory.dir('obfuscation')
+def stringsJar = workDir.map { it.file('strings.jar') }
+def namesJar = workDir.map { it.file('names.jar') }
+def mappingFile = workDir.map { it.file('mapping.txt') }
+def configFile = workDir.map { it.file('proguard.pro') }
+// 難読化する対象(プロトコル・走査・検証のロジック)。アダプタはローダーとの接点なので対象外。
+def obfuscatedPackages = ['io.github.katyusha8138.mcc2s.core', 'io.github.katyusha8138.mcc2s.common']
+
+def obfuscateStrings = tasks.register('obfuscateStrings', JavaExec) {
+    group = 'build'
+    description = '配布 jar の文字列定数を難読化する(core / common)'
+    dependsOn plainJar
+    inputs.file plainJar.flatMap { it.archiveFile }
+    outputs.file stringsJar
+    classpath = files(obfProject.tasks.named('jar'), obfProject.configurations.named('runtimeClasspath'))
+    mainClass = 'io.github.katyusha8138.mcc2s.obfuscator.Main'
+    doFirst {
+        stringsJar.get().asFile.parentFile.mkdirs()
+        args = [plainJar.get().archiveFile.get().asFile.path, stringsJar.get().asFile.path] + obfuscatedPackages
+    }
+}
+
+def jdkHome = javaToolchains.launcherFor(java.toolchain).map { it.metadata.installationPath.asFile }
+
+def obfuscateNames = tasks.register('obfuscateNames', JavaExec) {
+    group = 'build'
+    description = 'ProGuard でクラス・メソッド・フィールドの名前を付け替える(縮小・最適化はしない)'
+    dependsOn obfuscateStrings
+    inputs.file stringsJar
+    inputs.dir rootProject.file('gradle/proguard')
+    inputs.property('loader', loaderName)
+    outputs.files namesJar, mappingFile
+    classpath = configurations.named('proguard')
+    mainClass = 'proguard.ProGuard'
+    maxHeapSize = '1g'
+    doFirst {
+        File home = jdkHome.get()
+        def libs = ['java.base', 'java.logging', 'java.management'].collect { module ->
+            File jmod = new File(home, "jmods/${module}.jmod")
+            if (!jmod.isFile()) {
+                throw new GradleException("JDK の jmods が見つかりません: ${jmod}(難読化には jmods 付きの JDK が必要です)")
+            }
+            "-libraryjars '${jmod}'(!**.jar;!module-info.class)"
+        }
+        File proguardDir = rootProject.file('gradle/proguard')
+        def lines = [
+            "-injars '${stringsJar.get().asFile}'",
+            "-outjars '${namesJar.get().asFile}'",
+        ] + libs + [
+            "-printmapping '${mappingFile.get().asFile}'",
+            "-include '${new File(proguardDir, 'common.pro')}'",
+            "-include '${new File(proguardDir, loaderName + '.pro')}'",
+        ]
+        File cfg = configFile.get().asFile
+        cfg.parentFile.mkdirs()
+        cfg.text = lines.join('\n') + '\n'
+        namesJar.get().asFile.delete() // ProGuard は既存の出力を上書きしないので、消してから実行する
+        args = ['@' + cfg.path]
+    }
+}
+
+// 配布物。ProGuard の出力を、再現可能なアーカイブ設定(タイムスタンプ固定・順序固定)で詰め直す。
+def distJar = tasks.register('distJar', Jar) {
+    group = 'build'
+    description = '難読化した配布用 jar を作る'
+    dependsOn obfuscateNames
+    archiveBaseName = plainJar.flatMap { it.archiveBaseName }
+    archiveClassifier = ''
+    from(zipTree(namesJar)) {
+        exclude 'META-INF/MANIFEST.MF'
+    }
+    manifest {
+        from(plainJar.get().manifest)
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn distJar
+}
