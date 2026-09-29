@@ -4,10 +4,10 @@
 """
 mcC2S 導入サーバーに「mcC2S を持たないクライアント」として接続し、拒否されることを確認するプローブ。
 
-Minecraft 1.21.1 (プロトコル 767) のログイン〜設定フェーズだけを話す最小クライアント。
-オフラインモードのテストサーバー用(認証・暗号化は行わない)。
+Minecraft 1.21.1 (プロトコル 767、ログイン〜設定フェーズ)と 1.20.1 (プロトコル 763、設定フェーズなし。
+ログイン成功 = 参加できた)だけを話す最小クライアント。オフラインモードのテストサーバー用(認証・暗号化は行わない)。
 
-  python3 vanilla_probe.py [--host 127.0.0.1] [--port 25599] [--name Probe]
+  python3 vanilla_probe.py [--host 127.0.0.1] [--port 25599] [--protocol 767|763] [--name Probe]
 
 終了コード: 0 = mcC2S に拒否された(期待どおり) / 1 = 拒否されず参加できた / 2 = 想定外の失敗
 """
@@ -103,14 +103,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=25599)
+    ap.add_argument("--protocol", type=int, default=767, help="767 = 1.21.1 (NeoForge), 763 = 1.20.1 (Forge)")
     ap.add_argument("--name", default="Probe")
     ap.add_argument("--timeout", type=float, default=45.0)
     args = ap.parse_args()
 
     c = Conn(args.host, args.port, args.timeout)
     # Handshake -> login
-    c.send(0x00, varint(767) + mc_string(args.host) + struct.pack(">H", args.port) + varint(2))
-    c.send(0x00, mc_string(args.name) + uuid.uuid3(uuid.NAMESPACE_DNS, "OfflinePlayer:" + args.name).bytes)
+    c.send(0x00, varint(args.protocol) + mc_string(args.host) + struct.pack(">H", args.port) + varint(2))
+    player_uuid = uuid.uuid3(uuid.NAMESPACE_DNS, "OfflinePlayer:" + args.name).bytes
+    if args.protocol >= 764:  # 1.20.2 以降: 名前 + UUID
+        c.send(0x00, mc_string(args.name) + player_uuid)
+    else:  # 1.20.1 まで: 名前 + (UUID があるか) + UUID
+        c.send(0x00, mc_string(args.name) + b"\x01" + player_uuid)
 
     state = "login"
     deadline = time.time() + args.timeout
@@ -136,13 +141,18 @@ def main() -> int:
                         break
                     shift += 7
                 c.compress = v
+            elif pid == 0x02 and args.protocol < 764:  # Login Success(設定フェーズが無いので、ここまで来たら参加できてしまった)
+                print("[probe] server sent Login Success: the client was ADMITTED")
+                return 1
             elif pid == 0x02:  # Login Success
                 c.send(0x03)  # Login Acknowledged
                 state = "config"
                 print(f"[probe] logged in as {args.name}; entering configuration phase")
             elif pid == 0x00:  # Disconnect (login)
-                print("[probe] disconnected during login:", extract_text(payload))
-                return 2
+                reason = extract_text(payload)
+                print(f"[probe] DISCONNECTED after {time.time() - started:.1f}s: {reason}")
+                # 1.20.1 では設定フェーズが無く、mcC2S の拒否はログイン中の切断として届く
+                return 0 if args.protocol < 764 and "mcC2S" in reason else 2
             continue
 
         # configuration phase

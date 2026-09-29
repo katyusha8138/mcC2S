@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 mcC2S contributors
 #
-# NeoForge 1.21.1 の実機エンドツーエンド試験(開発環境の専用サーバー + 実クライアント)。
+# 実機エンドツーエンド試験(開発環境の専用サーバー + 実クライアント)。
 #
-#   tools/e2e/e2e.sh [シナリオ...]     (省略時は全シナリオ)
+#   tools/e2e/e2e.sh [シナリオ...]                    (省略時は全シナリオ。既定は NeoForge 1.21.1)
+#   E2E_LOADER=forge tools/e2e/e2e.sh [シナリオ...]   Forge 1.20.1 を試験する(JDK 17 が必要)
 #
 # シナリオ:
 #   vanilla   mcC2S を持たないクライアント(生プロトコルのプローブ)     -> 拒否される
@@ -23,9 +24,14 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUN="$ROOT/neoforge/run"
-OUT="${E2E_OUT:-$ROOT/build/e2e}"
-PORT=25599
+LOADER="${E2E_LOADER:-neoforge}"
+case "$LOADER" in
+  neoforge) PROTOCOL=767; PORT=25599 ;;   # Minecraft 1.21.1
+  forge)    PROTOCOL=763; PORT=25598 ;;   # Minecraft 1.20.1
+  *) echo "E2E_LOADER must be neoforge or forge (got '$LOADER')" >&2; exit 2 ;;
+esac
+RUN="$ROOT/$LOADER/run"
+OUT="${E2E_OUT:-$ROOT/build/e2e/$LOADER}"
 mkdir -p "$OUT"
 SERVER_LOG="$OUT/server.log"
 PASS=0
@@ -98,7 +104,7 @@ apply_policy() {
 
 boot_server() {
   : > "$SERVER_LOG"
-  (cd "$ROOT" && nohup ./gradlew :neoforge:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
+  (cd "$ROOT" && nohup ./gradlew :$LOADER:runServer --console=plain > "$SERVER_LOG" 2>&1 &)
   for _ in $(seq 1 180); do
     grep -q 'Done (' "$SERVER_LOG" && return 0
     grep -q 'Failed to start the minecraft server' "$SERVER_LOG" && { log "server failed to start"; tail -20 "$SERVER_LOG"; return 1; }
@@ -152,7 +158,7 @@ run_client() {
   {
     ulimit -f 40960
     cd "$ROOT" && LIBGL_ALWAYS_SOFTWARE=1 exec xvfb-run -a -s "-screen 0 1280x720x24" \
-      ./gradlew :neoforge:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
+      ./gradlew :$LOADER:runClient -Pquickplay=127.0.0.1:$PORT -Pmcname="$name" --console=plain
   } > "$CLIENT_LOG" 2>&1 < /dev/null &
   for _ in $(seq 1 60); do
     if grep -q "y/n:" "$CLIENT_LOG" 2>/dev/null; then log "  client crashed during startup (see $CLIENT_LOG)"; break; fi
@@ -220,7 +226,7 @@ expect_within() { # expect_within <秒> <説明> <ファイル> <正規表現>
 
 scenario_vanilla() {
   log "== vanilla: client without mcC2S"
-  python3 "$ROOT/tools/e2e/vanilla_probe.py" --port $PORT --name VanillaVic > "$OUT/vanilla.out" 2>&1
+  python3 "$ROOT/tools/e2e/vanilla_probe.py" --port $PORT --protocol $PROTOCOL --name VanillaVic > "$OUT/vanilla.out" 2>&1
   cat "$OUT/vanilla.out" | sed 's/^/    /'
   expect "kicked with the mcC2S-required message" "$OUT/vanilla.out" "DISCONNECTED.*mcC2S"
   expect "server logged it" "$SERVER_LOG" "VanillaVic.*does not have mcC2S installed"

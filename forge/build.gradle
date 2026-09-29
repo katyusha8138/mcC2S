@@ -1,0 +1,75 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev.legacyforge' version '2.0.147'
+}
+
+// 他プロジェクトのソースセットを Mod の一部として宣言するため、先に評価しておく
+evaluationDependsOn(':core')
+evaluationDependsOn(':common')
+
+base {
+    archivesName = "mcc2s-forge-${forge_minecraft_version}"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+legacyForge {
+    version = "${forge_minecraft_version}-${forge_version}"
+
+    runs {
+        server {
+            server()
+            gameDirectory = file('run/server')
+            programArgument '--nogui'
+        }
+        client {
+            client()
+            gameDirectory = file('run/client')
+            programArguments.addAll('--username', project.findProperty('mcname') ?: 'McC2SDev')
+            // 例: ./gradlew :forge:runClient -Pquickplay=127.0.0.1:25598
+            if (project.hasProperty('quickplay')) {
+                programArguments.addAll('--quickPlayMultiplayer', project.property('quickplay'))
+            }
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            // 開発実行では、core / common のクラスも同じ Mod として読み込む(配布 jar には下の jar タスクで同梱)
+            sourceSet sourceSets.main
+            sourceSet project(':common').sourceSets.main
+            sourceSet project(':core').sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    implementation project(':common')
+}
+
+jar {
+    from(project(':core').sourceSets.main.output)
+    from(project(':common').sourceSets.main.output)
+    from(rootProject.file('LICENSE'))
+    manifest {
+        attributes(
+            'Implementation-Title': 'mcC2S',
+            'Implementation-Version': mcc2s_version,
+            'Implementation-Vendor': 'mcC2S contributors'
+        )
+    }
+}
+
+processResources {
+    inputs.property 'mod_version', mcc2s_version
+    filesMatching('META-INF/mods.toml') {
+        expand 'mod_version': mcc2s_version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
