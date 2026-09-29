@@ -8,20 +8,50 @@
   - versions/<id>/<id>.json と、inheritsFrom の親(バニラ)の JSON を合成する
   - libraries を OS のルールで選び、クラスパスを作る
   - JVM 引数・ゲーム引数のテンプレートを置換する
+インストーラは、バニラ側のバージョン JSON とライブラリ(LWJGL など)を取得しない(それはランチャーの仕事)ので、
+足りないものは Mojang のホスト(piston-meta.mojang.com / libraries.minecraft.net)から取得する。
 認証はしない(オフラインのテストサーバーに接続するだけ)。アセットは指定のディレクトリを使う。
 
   launch_client.py --dir <クライアントのディレクトリ> --name <名前> [--quickplay host:port]
-                   [--assets-dir <アセット>] [--java <java>] [--dry-run]
+                   [--assets-dir <アセット>] [--java <java>] [--dry-run] [--fetch-only]
 
 --dir にはインストーラの出力(versions/ と libraries/)と、ゲームのディレクトリを兼ねる。
 """
 import argparse
+import hashlib
 import json
 import os
 import platform
+import subprocess
 import sys
 import uuid
 from pathlib import Path
+
+MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+
+
+def download(url: str, dest: Path, sha1: str = "") -> None:
+    """curl で取得する(環境のプロキシ・CA 設定をそのまま使えるため)。sha1 が分かっていれば検証する。"""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    subprocess.run(["curl", "-fsSL", "--retry", "5", "--retry-delay", "5", "-o", str(part), url], check=True)
+    if sha1:
+        got = hashlib.sha1(part.read_bytes()).hexdigest()
+        if got != sha1:
+            part.unlink()
+            raise RuntimeError(f"sha1 mismatch for {url}: {got} != {sha1}")
+    part.replace(dest)
+
+
+def ensure_vanilla_json(base: Path, mc_version: str) -> None:
+    path = base / "versions" / mc_version / f"{mc_version}.json"
+    if path.is_file():
+        return
+    manifest_file = base / "versions" / ".version_manifest_v2.json"
+    download(MANIFEST_URL, manifest_file)
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    entry = next(v for v in manifest["versions"] if v["id"] == mc_version)
+    download(entry["url"], path, entry.get("sha1", ""))
 
 
 def load_json(path: Path) -> dict:
@@ -78,6 +108,7 @@ def resolve_version(base: Path, version_id: str) -> dict:
     if not parent_id:
         child["_jar_id"] = version_id
         return child
+    ensure_vanilla_json(base, parent_id)
     parent = resolve_version(base, parent_id)
     merged = dict(parent)
     for k, v in child.items():
@@ -120,13 +151,15 @@ def main() -> int:
     ap.add_argument("--java", default="java")
     ap.add_argument("--version-id", default="", help="省略時は versions/ にある(バニラ以外の)唯一のバージョン")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--fetch-only", action="store_true", help="足りないファイルを取得して終わる(起動しない)")
     args = ap.parse_args()
 
     base = Path(args.dir).resolve()
     vid = args.version_id
     if not vid:
         cands = [p.name for p in (base / "versions").iterdir()
-                 if p.is_dir() and load_json(p / f"{p.name}.json").get("inheritsFrom")]
+                 if p.is_dir() and (p / f"{p.name}.json").is_file()
+                 and load_json(p / f"{p.name}.json").get("inheritsFrom")]
         if len(cands) != 1:
             print(f"cannot decide the version to launch: {cands}", file=sys.stderr)
             return 2
@@ -145,15 +178,21 @@ def main() -> int:
         rel = art["path"] if art and art.get("path") else maven_path(lib["name"])
         p = base / "libraries" / rel
         if not p.is_file():
-            if art and not art.get("url"):
-                continue  # インストーラが生成するもの以外で、置き場の無いエントリは飛ばす
-            print(f"missing library: {p}", file=sys.stderr)
-            return 2
+            if art and art.get("url"):
+                download(art["url"], p, art.get("sha1", ""))
+            elif art:
+                continue  # インストーラが生成する成果物などで、取得元が無いエントリは飛ばす
+            else:
+                print(f"missing library: {p}", file=sys.stderr)
+                return 2
         libs.append(str(p))
     libs.reverse()
     client_jar = base / "versions" / v["_jar_id"] / f"{v['_jar_id']}.jar"
     classpath_items = libs + ([str(client_jar)] if client_jar.is_file() else [])
 
+    if args.fetch_only:
+        print(f"ready: {len(libs)} libraries for {vid}")
+        return 0
     natives = base / "natives"
     natives.mkdir(exist_ok=True)
     uid = str(uuid.uuid3(uuid.NAMESPACE_DNS, "OfflinePlayer:" + args.name))
@@ -176,14 +215,18 @@ def main() -> int:
         "clientid": "0",
         "user_type": "legacy",
         "user_properties": "{}",
+        "quickPlayMultiplayer": args.quickplay,
+        "quickPlayPath": "quickplay.log",
+        "quickPlaySingleplayer": "",
+        "quickPlayRealms": "",
         "resolution_width": "854",
         "resolution_height": "480",
     }
     features = {"has_custom_resolution": True, "is_quick_play_multiplayer": bool(args.quickplay)}
     jvm = expand_args(v["arguments"]["jvm"], subst, features)
     game = expand_args(v["arguments"]["game"], subst, features)
-    if args.quickplay:
-        game += ["--quickPlayMultiplayer", args.quickplay]
+    if args.quickplay and "--quickPlayMultiplayer" not in game:
+        game += ["--quickPlayMultiplayer", args.quickplay]  # バージョン JSON にクイックプレイの引数が無いとき
 
     cmd = [args.java, "-Xmx1536m"] + jvm + [v["mainClass"]] + game
     if args.dry_run:

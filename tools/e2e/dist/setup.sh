@@ -51,4 +51,8 @@ if [ ! -f "$dir/client/.installed" ]; then
     || { tail -20 "$dir/cache/install-client.log"; exit 1; }
   touch "$dir/client/.installed"
 fi
+
+# バニラ側のバージョン JSON とライブラリ(インストーラは取得しない)を取得する。冪等。
+echo "[dist] fetching the vanilla libraries for the $loader client"
+python3 "$ROOT/tools/e2e/dist/launch_client.py" --dir "$dir/client" --name Setup --fetch-only
 echo "[dist] $loader is ready in $dir"
